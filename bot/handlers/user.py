@@ -137,7 +137,8 @@ async def handle_text_message(
 
     logger.info(f"Query from {user_id}: '{original_text[:80]}'")
 
-    await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+    # Отправляем "думающее" сообщение сразу — пользователь видит реакцию
+    thinking_msg = await message.answer("🔄 <i>Сұрағыңыз өңделуде, күте тұрыңыз...</i>")
 
     is_subscribed = kwargs.get("is_subscribed", False)
 
@@ -172,7 +173,7 @@ async def handle_text_message(
 
             # Кнопка "Устазға сұрақ" для всех пользователей
             reply_markup = get_ask_ustaz_keyboard(log_id)
-            await message.answer(response_text, reply_markup=reply_markup)
+            await thinking_msg.edit_text(response_text, reply_markup=reply_markup)
             logger.info(f"Cache hit for {user_id}, sim={cached['similarity']:.4f}")
             return
 
@@ -181,7 +182,7 @@ async def handle_text_message(
 
     # 3. Отправляем в ChatGPT с историей
     if not ai_engine.is_available():
-        await message.answer(MSG_AI_ERROR)
+        await thinking_msg.edit_text(MSG_AI_ERROR)
         return
 
     ai_result = await ai_engine.ask(original_text, context_results, conversation_history)
@@ -191,7 +192,7 @@ async def handle_text_message(
             user_telegram_id=user_id, query_text=original_text,
             normalized_text=normalized, similarity_score=0.0, was_answered=False,
         )
-        await message.answer(MSG_NOT_FOUND)
+        await thinking_msg.edit_text(MSG_NOT_FOUND)
         return
 
     answer = ai_result["answer"]
@@ -223,5 +224,5 @@ async def handle_text_message(
 
     # Кнопка "Устазға сұрақ" для всех пользователей
     reply_markup = get_ask_ustaz_keyboard(log_id)
-    await message.answer(response_text, reply_markup=reply_markup)
+    await thinking_msg.edit_text(response_text, reply_markup=reply_markup)
     logger.info(f"AI answer for {user_id}, sources={sources_list}")
