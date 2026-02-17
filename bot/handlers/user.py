@@ -5,7 +5,7 @@
 
 from aiogram import Router, F
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Message
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from loguru import logger
 
 from config import (
@@ -22,6 +22,14 @@ from bot.keyboards.inline import get_ask_ustaz_keyboard
 
 router = Router()
 
+MAIN_KEYBOARD = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="🗑 Тарихты тазалау")],
+        [KeyboardButton(text="❓ Анықтама"), KeyboardButton(text="📜 Шарттар")],
+    ],
+    resize_keyboard=True,
+)
+
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, db: Database, **kwargs):
@@ -30,7 +38,7 @@ async def cmd_start(message: Message, db: Database, **kwargs):
         username=message.from_user.username,
         first_name=message.from_user.first_name,
     )
-    await message.answer(MSG_WELCOME)
+    await message.answer(MSG_WELCOME, reply_markup=MAIN_KEYBOARD)
 
 
 @router.message(Command("help"))
@@ -79,6 +87,30 @@ async def cmd_stats(message: Message, db: Database, search_engine: SearchEngine,
         f"Кэш: {search_engine.get_cache_count()} жауап"
     )
     await message.answer(text)
+
+
+@router.message(F.text == "📊 Статистика")
+async def btn_stats(message: Message, db: Database, search_engine: SearchEngine, **kwargs):
+    """Обработка кнопки Статистика."""
+    await cmd_stats(message, db=db, search_engine=search_engine, **kwargs)
+
+
+@router.message(F.text == "🗑 Тарихты тазалау")
+async def btn_clear(message: Message, db: Database, **kwargs):
+    """Обработка кнопки очистки истории."""
+    await cmd_clear(message, db=db, **kwargs)
+
+
+@router.message(F.text == "❓ Анықтама")
+async def btn_help(message: Message, **kwargs):
+    """Обработка кнопки помощи."""
+    await cmd_help(message, **kwargs)
+
+
+@router.message(F.text == "📜 Шарттар")
+async def btn_terms(message: Message, **kwargs):
+    """Обработка кнопки условий."""
+    await cmd_terms(message, **kwargs)
 
 
 @router.message(F.content_type != "text")
@@ -138,8 +170,8 @@ async def handle_text_message(
                 remaining = FREE_ANSWERS_LIMIT - new_count
                 response_text += f"\n\n⚠️ {MSG_WARNING.format(remaining=remaining, limit=FREE_ANSWERS_LIMIT)}"
 
-            # Кнопка "Устазға сұрақ" для подписчиков
-            reply_markup = get_ask_ustaz_keyboard(log_id) if is_subscribed else None
+            # Кнопка "Устазға сұрақ" для всех пользователей
+            reply_markup = get_ask_ustaz_keyboard(log_id)
             await message.answer(response_text, reply_markup=reply_markup)
             logger.info(f"Cache hit for {user_id}, sim={cached['similarity']:.4f}")
             return
@@ -189,7 +221,7 @@ async def handle_text_message(
         remaining = FREE_ANSWERS_LIMIT - new_count
         response_text += f"\n\n⚠️ {MSG_WARNING.format(remaining=remaining, limit=FREE_ANSWERS_LIMIT)}"
 
-    # Кнопка "Устазға сұрақ" для подписчиков
-    reply_markup = get_ask_ustaz_keyboard(log_id) if is_subscribed else None
+    # Кнопка "Устазға сұрақ" для всех пользователей
+    reply_markup = get_ask_ustaz_keyboard(log_id)
     await message.answer(response_text, reply_markup=reply_markup)
     logger.info(f"AI answer for {user_id}, sources={sources_list}")

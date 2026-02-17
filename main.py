@@ -9,6 +9,7 @@ import os
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import BotCommand
 from loguru import logger
 
 from config import BOT_TOKEN, LOG_PATH, OPENAI_API_KEY
@@ -93,6 +94,16 @@ async def main():
         "cache_engine": search_engine,
         "ai_engine": ai_engine,
     })
+
+    # Устанавливаем меню команд
+    await bot.set_my_commands([
+        BotCommand(command="start", description="Бастау"),
+        BotCommand(command="help", description="Анықтама"),
+        BotCommand(command="stats", description="Менің статистикам"),
+        BotCommand(command="clear", description="Диалог тарихын тазалау"),
+        BotCommand(command="terms", description="Пайдалану шарттары"),
+        BotCommand(command="paysupport", description="Төлем бойынша көмек"),
+    ])
 
     logger.info("Bot is starting polling...")
 
