@@ -101,10 +101,17 @@ def parse_ai_response(answer_text: str) -> dict:
     is_off_topic = "[OFF_TOPIC]" in answer_text
     is_uncertain = "[СЕНІМСІЗ]" in answer_text
 
+    # Нормализуем маркер [SUGGESTIONS] (AI иногда пишет кириллическую С вместо латинской)
+    normalized_text = re.sub(
+        r'\[[СC][Uu][Gg][Gg][Ee][Ss][Tt][Ii][Oo][Nn][Ss]\]',
+        '[SUGGESTIONS]',
+        answer_text,
+    )
+
     # Извлекаем suggestions
     suggestions = []
-    if "[SUGGESTIONS]" in answer_text:
-        parts = answer_text.split("[SUGGESTIONS]", 1)
+    if "[SUGGESTIONS]" in normalized_text:
+        parts = normalized_text.split("[SUGGESTIONS]", 1)
         answer_clean = parts[0].strip()
         suggestions_text = parts[1].strip() if len(parts) > 1 else ""
 
@@ -116,9 +123,8 @@ def parse_ai_response(answer_text: str) -> dict:
                     suggestions.append(suggestion)
     else:
         # Fallback: ищем строки с 💡 в конце ответа
-        answer_clean = answer_text
-        lines = answer_text.split("\n")
-        # Собираем 💡 строки с конца
+        answer_clean = normalized_text
+        lines = normalized_text.split("\n")
         tail_suggestions = []
         for line in reversed(lines):
             stripped = line.strip()
@@ -127,19 +133,19 @@ def parse_ai_response(answer_text: str) -> dict:
                 if suggestion:
                     tail_suggestions.append(suggestion)
             elif stripped and tail_suggestions:
-                break  # Дошли до не-suggestion строки
+                break
         if tail_suggestions:
             tail_suggestions.reverse()
             suggestions = tail_suggestions
-            # Убираем suggestion строки из ответа
-            clean_lines = []
-            for line in lines:
-                if not line.strip().startswith("💡"):
-                    clean_lines.append(line)
+            clean_lines = [l for l in lines if not l.strip().startswith("💡")]
             answer_clean = "\n".join(clean_lines).strip()
 
-    # Убираем маркеры из текста
-    answer_clean = answer_clean.replace("[OFF_TOPIC]", "").replace("[СЕНІМСІЗ]", "").strip()
+    # Убираем все оставшиеся маркеры из текста
+    answer_clean = answer_clean.replace("[OFF_TOPIC]", "").replace("[СЕНІМСІЗ]", "")
+    # Чистим любые оставшиеся варианты [SUGGESTIONS]
+    answer_clean = re.sub(
+        r'\[[СC][Uu][Gg][Gg][Ee][Ss][Tt][Ii][Oo][Nn][Ss]\]', '', answer_clean
+    ).strip()
 
     return {
         "answer": answer_clean,
