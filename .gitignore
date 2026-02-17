@@ -1,0 +1,9 @@
+.env
+*.db
+chroma_db/
+logs/
+venv/
+__pycache__/
+*.pyc
+backups/
+=1.0.0

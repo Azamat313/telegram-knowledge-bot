@@ -1,0 +1,20 @@
+[Unit]
+Description=Ramadan AI Bot (User Telegram Bot)
+After=network.target
+
+[Service]
+Type=simple
+User=bot
+Group=bot
+WorkingDirectory=/opt/telegram-knowledge-bot
+ExecStart=/opt/telegram-knowledge-bot/venv/bin/python main.py
+Restart=always
+RestartSec=5
+EnvironmentFile=/opt/telegram-knowledge-bot/.env
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ramadan-bot
+
+[Install]
+WantedBy=multi-user.target

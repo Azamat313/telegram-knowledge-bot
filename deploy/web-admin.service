@@ -1,0 +1,20 @@
+[Unit]
+Description=Bot Web Admin Panel
+After=network.target
+
+[Service]
+Type=simple
+User=bot
+Group=bot
+WorkingDirectory=/opt/telegram-knowledge-bot
+ExecStart=/opt/telegram-knowledge-bot/venv/bin/python web_simulator.py
+Restart=always
+RestartSec=5
+EnvironmentFile=/opt/telegram-knowledge-bot/.env
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=web-admin
+
+[Install]
+WantedBy=multi-user.target
