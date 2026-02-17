@@ -34,6 +34,16 @@ class Database:
 
         await self._conn.executescript(CREATE_TABLES_SQL)
         await self._conn.commit()
+
+        # Миграция: добавляем telegram_payment_charge_id если отсутствует
+        try:
+            await self._conn.execute(
+                "ALTER TABLE subscriptions ADD COLUMN telegram_payment_charge_id TEXT"
+            )
+            await self._conn.commit()
+        except Exception:
+            pass  # Колонка уже существует
+
         logger.info(f"Database connected: {self.db_path} (WAL mode)")
 
     async def close(self):
@@ -131,7 +141,7 @@ class Database:
         plan_name: str = "manual",
         days: int = 30,
         amount: float = 0,
-        currency: str = "KZT",
+        currency: str = "XTR",
         payment_method: str = None,
         payment_id: str = None,
     ):
@@ -146,9 +156,11 @@ class Database:
 
         await self._conn.execute(
             "INSERT INTO subscriptions "
-            "(user_telegram_id, plan_name, amount, currency, expires_at, payment_method, payment_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (telegram_id, plan_name, amount, currency, expires_at.isoformat(), payment_method, payment_id),
+            "(user_telegram_id, plan_name, amount, currency, expires_at, "
+            "payment_method, payment_id, telegram_payment_charge_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (telegram_id, plan_name, amount, currency, expires_at.isoformat(),
+             payment_method, payment_id, payment_id),
         )
         await self._conn.commit()
         logger.info(f"Subscription granted: user={telegram_id}, plan={plan_name}, days={days}")

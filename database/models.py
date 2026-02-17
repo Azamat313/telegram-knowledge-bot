@@ -32,11 +32,12 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     user_telegram_id BIGINT NOT NULL,
     plan_name TEXT NOT NULL,
     amount REAL NOT NULL,
-    currency TEXT DEFAULT 'KZT',
+    currency TEXT DEFAULT 'XTR',
     started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     expires_at DATETIME NOT NULL,
     payment_method TEXT,
-    payment_id TEXT
+    payment_id TEXT,
+    telegram_payment_charge_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS conversation_history (

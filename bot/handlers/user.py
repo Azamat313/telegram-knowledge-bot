@@ -12,6 +12,7 @@ from config import (
     MSG_WELCOME, MSG_HELP, MSG_NOT_FOUND, MSG_NON_TEXT,
     MSG_WARNING, MSG_AI_ERROR, FREE_ANSWERS_LIMIT, WARNING_AT,
     MSG_HISTORY_CLEARED, MSG_ASK_USTAZ_BUTTON,
+    MSG_TERMS, MSG_PAYSUPPORT,
 )
 from core.normalizer import normalize_text
 from core.search_engine import SearchEngine
@@ -42,6 +43,18 @@ async def cmd_clear(message: Message, db: Database, **kwargs):
     """Очистить историю диалога."""
     await db.clear_conversation_history(message.from_user.id)
     await message.answer(MSG_HISTORY_CLEARED)
+
+
+@router.message(Command("terms"))
+async def cmd_terms(message: Message, **kwargs):
+    """Условия использования (обязательно для Telegram Payments)."""
+    await message.answer(MSG_TERMS)
+
+
+@router.message(Command("paysupport"))
+async def cmd_paysupport(message: Message, **kwargs):
+    """Поддержка по оплате (обязательно для Telegram Payments)."""
+    await message.answer(MSG_PAYSUPPORT)
 
 
 @router.message(Command("stats"))
