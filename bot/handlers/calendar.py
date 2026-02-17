@@ -173,6 +173,14 @@ async def btn_calendar_ru(message: Message, db: Database, muftyat_api: MuftyatAP
     await _show_calendar(message, db, muftyat_api, message.from_user.id, week=0)
 
 
+# Inline-кнопка календаря под ответом ИИ
+@router.callback_query(F.data == "show_calendar")
+async def on_show_calendar(callback: CallbackQuery, db: Database, muftyat_api: MuftyatAPI, **kwargs):
+    """Кнопка календаря под ответом."""
+    await _show_calendar(callback.message, db, muftyat_api, callback.from_user.id, week=0)
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("cal_week:"))
 async def on_calendar_week(callback: CallbackQuery, db: Database, muftyat_api: MuftyatAPI, **kwargs):
     """Переключение недели в календаре."""

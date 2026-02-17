@@ -19,79 +19,70 @@ def get_subscription_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def get_answer_keyboard(
+    suggestions: list[str] = None,
+    query_log_id: int = 0,
+    lang: str = "kk",
+    is_uncertain: bool = False,
+) -> InlineKeyboardMarkup:
+    """
+    Клавиатура под ответом ИИ:
+    - Suggestions (кликабельные вопросы)
+    - Устазға сұрақ (только если ИИ не уверен)
+    - Календарь (всегда)
+    """
+    buttons = []
+
+    # Кнопки-предложения (кликабельные — отправляют вопрос)
+    if suggestions:
+        for i, suggestion in enumerate(suggestions[:3]):
+            btn_text = f"💡 {suggestion}"
+            if len(btn_text) > 64:
+                btn_text = btn_text[:61] + "..."
+            buttons.append([
+                InlineKeyboardButton(
+                    text=btn_text,
+                    callback_data=f"suggest:{i}",
+                ),
+            ])
+
+    # Кнопка "Устазға сұрақ" — только когда ИИ не уверен
+    if is_uncertain:
+        if lang == "ru":
+            ustaz_text = "🕌 Задать вопрос устазу (рекомендуем)"
+        else:
+            ustaz_text = "🕌 Устазға сұрақ қою (ұсынамыз)"
+        buttons.append([
+            InlineKeyboardButton(
+                text=ustaz_text,
+                callback_data=f"ask_ustaz:{query_log_id}",
+            ),
+        ])
+
+    # Кнопка календаря — всегда
+    cal_text = get_msg("btn_calendar", lang)
+    buttons.append([
+        InlineKeyboardButton(
+            text=cal_text,
+            callback_data="show_calendar",
+        ),
+    ])
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+# Legacy — для обратной совместимости
 def get_ask_ustaz_keyboard(query_log_id: int, lang: str = "kk") -> InlineKeyboardMarkup:
-    """Кнопка 'Устазға сұрақ' под AI-ответом."""
-    btn_text = get_msg("btn_ask_ustaz", lang)
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=btn_text,
-                    callback_data=f"ask_ustaz:{query_log_id}",
-                ),
-            ],
-        ]
-    )
-
-
-def get_uncertain_keyboard(query_log_id: int, lang: str = "kk") -> InlineKeyboardMarkup:
-    """Кнопка 'Устазға сұрақ' — заметная, когда ИИ не уверен в ответе."""
-    if lang == "ru":
-        btn_text = "🕌 Задать вопрос устазу (рекомендуем)"
-    else:
-        btn_text = "🕌 Устазға сұрақ қою (ұсынамыз)"
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=btn_text,
-                    callback_data=f"ask_ustaz:{query_log_id}",
-                ),
-            ],
-        ]
-    )
+    return get_answer_keyboard(query_log_id=query_log_id, lang=lang)
 
 
 def get_suggestion_keyboard(
     suggestions: list[str], query_log_id: int, lang: str = "kk",
     show_ustaz: bool = False, is_uncertain: bool = False,
 ) -> InlineKeyboardMarkup:
-    """
-    Клавиатура с предложениями 'Білесіз бе?' и кнопкой устаза.
-
-    suggestions: список текстовых предложений (макс 3)
-    show_ustaz: показать кнопку устаза (всегда)
-    is_uncertain: если True, кнопка устаза заметнее
-    """
-    buttons = []
-
-    # Кнопки-предложения
-    for i, suggestion in enumerate(suggestions[:3]):
-        # Обрезаем текст для кнопки (макс 64 символа)
-        btn_text = f"💡 {suggestion}"
-        if len(btn_text) > 64:
-            btn_text = btn_text[:61] + "..."
-        buttons.append([
-            InlineKeyboardButton(
-                text=btn_text,
-                callback_data=f"suggest:{i}",
-            ),
-        ])
-
-    # Кнопка "Устазға сұрақ"
-    if is_uncertain:
-        if lang == "ru":
-            ustaz_text = "🕌 Задать вопрос устазу (рекомендуем)"
-        else:
-            ustaz_text = "🕌 Устазға сұрақ қою (ұсынамыз)"
-    else:
-        ustaz_text = get_msg("btn_ask_ustaz", lang)
-
-    buttons.append([
-        InlineKeyboardButton(
-            text=ustaz_text,
-            callback_data=f"ask_ustaz:{query_log_id}",
-        ),
-    ])
-
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    return get_answer_keyboard(
+        suggestions=suggestions,
+        query_log_id=query_log_id,
+        lang=lang,
+        is_uncertain=is_uncertain,
+    )

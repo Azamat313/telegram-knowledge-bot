@@ -18,7 +18,7 @@ from core.normalizer import normalize_text
 from core.search_engine import SearchEngine
 from core.ai_engine import AIEngine
 from database.db import Database
-from bot.keyboards.inline import get_ask_ustaz_keyboard, get_suggestion_keyboard
+from bot.keyboards.inline import get_answer_keyboard
 
 router = Router()
 
@@ -123,35 +123,29 @@ async def btn_terms(message: Message, db: Database, **kwargs):
 
 
 @router.callback_query(F.data.startswith("suggest:"))
-async def on_suggestion_click(callback: CallbackQuery, db: Database, **kwargs):
-    """Пользователь нажал на кнопку-предложение 'Білесіз бе?'."""
-    # Получаем текст кнопки, которую нажали
-    btn_text = callback.message.reply_markup.inline_keyboard
+async def on_suggestion_click(
+    callback: CallbackQuery, db: Database,
+    search_engine: SearchEngine, ai_engine: AIEngine, **kwargs
+):
+    """Пользователь нажал на кнопку-предложение — обрабатываем как вопрос."""
+    btn_rows = callback.message.reply_markup.inline_keyboard
     idx = int(callback.data.split(":")[1])
 
     suggestion_text = None
-    if idx < len(btn_text):
-        raw = btn_text[idx][0].text
-        # Убираем эмодзи "💡 " из текста
+    if idx < len(btn_rows):
+        raw = btn_rows[idx][0].text
         suggestion_text = raw.lstrip("💡").strip()
         if suggestion_text.endswith("..."):
-            suggestion_text = None  # Обрезанный текст — не отправляем
+            suggestion_text = None
 
     await callback.answer()
 
-    if suggestion_text:
-        # Отправляем вопрос от имени пользователя
-        await callback.message.answer(f"💬 {suggestion_text}")
-        # Создаём фейковое сообщение-эмуляцию (пересылаем текст на обработку)
-        # Просто отправляем текст — он попадёт в handle_text_message
-        # Но callback не создаёт Message, поэтому просто подсказываем пользователю
-        user = await db.get_user(callback.from_user.id)
-        lang = user.get("language", "kk") if user else "kk"
-        if lang == "ru":
-            hint = f"Отправьте этот вопрос: <b>{suggestion_text}</b>"
-        else:
-            hint = f"Осы сұрақты жіберіңіз: <b>{suggestion_text}</b>"
-        await callback.message.answer(hint)
+    if not suggestion_text:
+        return
+
+    # Отправляем вопрос как сообщение и обрабатываем
+    fake_msg = await callback.message.answer(f"💬 {suggestion_text}")
+    await _process_question(fake_msg, db, search_engine, ai_engine, suggestion_text, **kwargs)
 
 
 @router.message(F.content_type != "text")
@@ -170,30 +164,41 @@ async def handle_text_message(
     **kwargs,
 ):
     """Кэш → Контекст из базы → ChatGPT (с памятью) → Кэш."""
-    user_id = message.from_user.id
     original_text = message.text.strip()
-
     normalized = normalize_text(original_text)
     if not normalized:
-        user = await db.get_user(user_id)
+        user = await db.get_user(message.from_user.id)
         lang = user.get("language", "kk") if user else "kk"
         await message.answer(get_msg("non_text", lang))
         return
+
+    await _process_question(message, db, search_engine, ai_engine, original_text, **kwargs)
+
+
+async def _process_question(
+    message: Message,
+    db: Database,
+    search_engine: SearchEngine,
+    ai_engine: AIEngine,
+    original_text: str,
+    **kwargs,
+):
+    """Общая обработка вопроса (из текста или suggestion-клика)."""
+    user_id = message.from_user.id
+    normalized = normalize_text(original_text)
 
     logger.info(f"Query from {user_id}: '{original_text[:80]}'")
 
     user = await db.get_user(user_id)
     lang = user.get("language", "kk") if user else "kk"
 
-    # Отправляем "думающее" сообщение сразу — пользователь видит реакцию
     thinking_msg = await message.answer("🔄 <i>Сұрағыңыз өңделуде, күте тұрыңыз...</i>")
 
     is_subscribed = kwargs.get("is_subscribed", False)
 
-    # Загружаем историю диалога
     conversation_history = await db.get_conversation_history(user_id)
 
-    # 1. Проверяем кэш (только если нет истории — иначе контекст диалога теряется)
+    # 1. Проверяем кэш
     if not conversation_history:
         cached = await search_engine.search_cache(normalized)
         if cached:
@@ -207,7 +212,6 @@ async def handle_text_message(
             )
             new_count = await db.increment_answers_count(user_id)
 
-            # Сохраняем в историю
             await db.add_conversation_message(user_id, "user", original_text)
             await db.add_conversation_message(user_id, "assistant", answer)
 
@@ -220,8 +224,7 @@ async def handle_text_message(
                 remaining = FREE_ANSWERS_LIMIT - new_count
                 response_text += f"\n\n⚠️ {get_msg('warning', lang, remaining=remaining, limit=FREE_ANSWERS_LIMIT)}"
 
-            # Кнопка "Устазға сұрақ" для всех пользователей
-            reply_markup = get_ask_ustaz_keyboard(log_id, lang)
+            reply_markup = get_answer_keyboard(lang=lang)
             await thinking_msg.edit_text(response_text, reply_markup=reply_markup)
             logger.info(f"Cache hit for {user_id}, sim={cached['similarity']:.4f}")
             return
@@ -252,7 +255,7 @@ async def handle_text_message(
     source_urls = ai_result.get("source_urls", [])
     sources_str = ", ".join(sources_list) if sources_list else ""
 
-    # 4. Кэшируем (только если нет активной истории и не off-topic)
+    # 4. Кэшируем
     if not conversation_history and not is_off_topic:
         await search_engine.cache_answer(question=normalized, answer=answer, sources=sources_str)
 
@@ -263,19 +266,16 @@ async def handle_text_message(
     )
     new_count = await db.increment_answers_count(user_id)
 
-    # Сохраняем в историю
     await db.add_conversation_message(user_id, "user", original_text)
     await db.add_conversation_message(user_id, "assistant", answer)
 
     # Формируем ответ
     response_text = answer
 
-    # Источники (книги)
     if sources_str and not is_off_topic:
         source_label = get_msg("source_label", lang)
         response_text += f"\n\n{source_label}: {sources_str}"
 
-    # Ссылки на сайты (islam.kz, muftyat.kz)
     if source_urls and not is_off_topic:
         for url in source_urls:
             if "islam.kz" in url:
@@ -283,7 +283,6 @@ async def handle_text_message(
             elif "muftyat.kz" in url:
                 response_text += f"\n🔗 muftyat.kz: {url}"
 
-    # Предупреждение об неуверенности
     if is_uncertain:
         if lang == "ru":
             response_text += (
@@ -296,30 +295,17 @@ async def handle_text_message(
                 "Нақты жауап алу үшін устазға сұрақ қоюды ұсынамыз.</i>"
             )
 
-    # Предупреждение о лимите
     if not is_subscribed and WARNING_AT <= new_count < FREE_ANSWERS_LIMIT:
         remaining = FREE_ANSWERS_LIMIT - new_count
         response_text += f"\n\n⚠️ {get_msg('warning', lang, remaining=remaining, limit=FREE_ANSWERS_LIMIT)}"
 
-    # Клавиатура: если есть suggestions — показываем их + кнопку устаза
-    if suggestions and not is_off_topic:
-        reply_markup = get_suggestion_keyboard(
-            suggestions=suggestions,
-            query_log_id=log_id,
-            lang=lang,
-            show_ustaz=True,
-            is_uncertain=is_uncertain,
-        )
-    elif is_uncertain:
-        reply_markup = get_suggestion_keyboard(
-            suggestions=[],
-            query_log_id=log_id,
-            lang=lang,
-            show_ustaz=True,
-            is_uncertain=True,
-        )
-    else:
-        reply_markup = get_ask_ustaz_keyboard(log_id, lang)
+    # Клавиатура: suggestions + устаз (только если uncertain) + календарь
+    reply_markup = get_answer_keyboard(
+        suggestions=suggestions if not is_off_topic else None,
+        query_log_id=log_id,
+        lang=lang,
+        is_uncertain=is_uncertain,
+    )
 
     await thinking_msg.edit_text(response_text, reply_markup=reply_markup)
     logger.info(
