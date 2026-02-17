@@ -45,18 +45,27 @@ class MuftyatAPI:
                 return None
         return None
 
+    def _normalize_city(self, raw: dict) -> dict:
+        """Нормализовать ключи города из API (title → name)."""
+        return {
+            "id": raw.get("id", 0),
+            "name": raw.get("title", raw.get("name", "")),
+            "lat": raw.get("lat", 0),
+            "lng": raw.get("lng", 0),
+        }
+
     async def search_cities(self, query: str) -> list[dict]:
         """Поиск городов по названию. Возвращает [{id, name, lat, lng}]."""
         data = await self._get("/cities/", params={"search": query})
         if data and "results" in data:
-            return data["results"]
+            return [self._normalize_city(c) for c in data["results"]]
         return []
 
     async def get_nearest_city(self, lat: float, lng: float) -> dict | None:
         """Найти ближайший город по координатам. Возвращает {id, name, lat, lng}."""
         data = await self._get("/cities/", params={"lat": str(lat), "lng": str(lng)})
         if data and "results" in data and data["results"]:
-            return data["results"][0]
+            return self._normalize_city(data["results"][0])
         return None
 
     async def get_prayer_times(self, year: int, lat: float, lng: float) -> list[dict]:
