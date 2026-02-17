@@ -8,7 +8,8 @@ from aiogram.types import Message
 from loguru import logger
 
 from config import ADMIN_IDS, MSG_ADMIN_ONLY
-from core.search_engine import CacheEngine
+from core.search_engine import CacheEngine, SearchEngine
+from core.knowledge_loader import load_all_knowledge
 from database.db import Database
 
 router = Router()
@@ -131,6 +132,27 @@ async def cmd_admin_clear_cache(
     cache_engine.clear_cache()
     await message.answer("Кэш ИИ-ответов очищен.")
     logger.info(f"Cache cleared by admin {message.from_user.id}")
+
+
+@router.message(Command("admin_reload_knowledge"))
+async def cmd_admin_reload_knowledge(
+    message: Message, search_engine: SearchEngine, **kwargs
+):
+    """Перезагрузить базу знаний: /admin_reload_knowledge"""
+    if not is_admin(message.from_user.id):
+        await message.answer(MSG_ADMIN_ONLY)
+        return
+
+    await message.answer("🔄 Сбрасываю базу знаний и загружаю заново...")
+    search_engine.reset_knowledge()
+    doc_count = load_all_knowledge(search_engine)
+    total = search_engine.get_collection_count()
+    await message.answer(
+        f"✅ База знаний перезагружена!\n"
+        f"Загружено: {doc_count} документов\n"
+        f"Всего в базе: {total}"
+    )
+    logger.info(f"Knowledge reloaded by admin {message.from_user.id}: {doc_count} docs")
 
 
 @router.message(Command("admin_add_ustaz"))

@@ -61,9 +61,12 @@ def load_all_knowledge(
     for json_file in json_files:
         logger.info(f"Loading knowledge from: {json_file.name}")
         entries = load_knowledge_from_file(str(json_file))
+        file_stem = json_file.stem
 
-        for entry in entries:
-            entry_id = entry.get("id", str(total_entries))
+        for entry_idx, entry in enumerate(entries):
+            raw_id = entry.get("id", "")
+            # Глобально уникальный ID: файл + индекс (защита от дубликатов в JSON)
+            entry_id = f"{file_stem}_{entry_idx}"
             question = entry.get("question", "")
             answer = entry.get("answer", "")
             category = entry.get("category", "")
@@ -74,7 +77,7 @@ def load_all_knowledge(
                 logger.warning(f"Skipping entry {entry_id}: missing question or answer")
                 continue
 
-            source = entry.get("source", json_file.stem)
+            source = entry.get("source", file_stem)
             author = entry.get("author", "")
             book_title = entry.get("book_title", "")
             page = entry.get("page", "")
@@ -85,7 +88,7 @@ def load_all_knowledge(
             all_ids.append(doc_id)
             all_documents.append(question)
             all_metadatas.append({
-                "knowledge_id": entry_id,
+                "knowledge_id": raw_id or entry_id,
                 "answer": answer,
                 "category": category,
                 "tags": ",".join(tags) if tags else "",
@@ -105,7 +108,7 @@ def load_all_knowledge(
                 all_ids.append(alt_doc_id)
                 all_documents.append(alt_q)
                 all_metadatas.append({
-                    "knowledge_id": entry_id,
+                    "knowledge_id": raw_id or entry_id,
                     "answer": answer,
                     "category": category,
                     "tags": ",".join(tags) if tags else "",
@@ -123,16 +126,37 @@ def load_all_knowledge(
         logger.warning("No valid entries found in knowledge files")
         return 0
 
+    # Фильтруем уже загруженные документы (инкрементальная загрузка)
+    existing_ids = set()
+    if search_engine.get_collection_count() > 0:
+        try:
+            existing = search_engine._kb_collection.get(include=[])
+            existing_ids = set(existing["ids"])
+        except Exception:
+            pass
+
+    new_indices = [i for i, doc_id in enumerate(all_ids) if doc_id not in existing_ids]
+
+    if not new_indices:
+        logger.info(f"All {len(all_ids)} documents already loaded, nothing to add")
+        return 0
+
+    new_ids = [all_ids[i] for i in new_indices]
+    new_docs = [all_documents[i] for i in new_indices]
+    new_metas = [all_metadatas[i] for i in new_indices]
+
+    logger.info(f"Adding {len(new_ids)} new documents (skipping {len(all_ids) - len(new_ids)} existing)")
+
     # Загружаем батчами по 100 (ограничение ChromaDB)
     batch_size = 100
-    for i in range(0, len(all_ids), batch_size):
-        batch_ids = all_ids[i : i + batch_size]
-        batch_docs = all_documents[i : i + batch_size]
-        batch_metas = all_metadatas[i : i + batch_size]
+    for i in range(0, len(new_ids), batch_size):
+        batch_ids = new_ids[i : i + batch_size]
+        batch_docs = new_docs[i : i + batch_size]
+        batch_metas = new_metas[i : i + batch_size]
         search_engine.add_documents(batch_ids, batch_docs, batch_metas)
 
     logger.info(
-        f"Knowledge loaded: {total_entries} entries, "
-        f"{len(all_ids)} total documents (with alt_questions)"
+        f"Knowledge loaded: {total_entries} entries total, "
+        f"{len(new_ids)} new documents added (with alt_questions)"
     )
-    return len(all_ids)
+    return len(new_ids)

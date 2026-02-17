@@ -66,13 +66,13 @@ async def main():
     search_engine = SearchEngine()
     search_engine.init()
 
-    # Загрузка базы знаний (если пустая)
-    if search_engine.get_collection_count() == 0:
-        logger.info("Loading knowledge base...")
-        doc_count = load_all_knowledge(search_engine)
-        logger.info(f"Knowledge base: {doc_count} documents loaded")
+    # Загрузка базы знаний (инкрементальная — добавляет только новые документы)
+    logger.info(f"Knowledge base: {search_engine.get_collection_count()} existing documents")
+    doc_count = load_all_knowledge(search_engine)
+    if doc_count > 0:
+        logger.info(f"Knowledge base: +{doc_count} new documents, total={search_engine.get_collection_count()}")
     else:
-        logger.info(f"Knowledge base: {search_engine.get_collection_count()} documents")
+        logger.info(f"Knowledge base: up to date ({search_engine.get_collection_count()} documents)")
 
     # Инициализация ИИ-движка (ChatGPT)
     ai_engine = AIEngine()
