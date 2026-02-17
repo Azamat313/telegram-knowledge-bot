@@ -1,6 +1,7 @@
 """
 Загрузчик базы знаний из JSON-файлов в ChromaDB.
 Поддерживает alt_questions — альтернативные формулировки вопросов.
+Поддерживает поля author, book_title, page для источников.
 """
 
 import json
@@ -46,7 +47,7 @@ def load_all_knowledge(
         os.makedirs(knowledge_dir, exist_ok=True)
         return 0
 
-    json_files = list(knowledge_path.glob("*.json"))
+    json_files = [f for f in knowledge_path.glob("*.json") if "ramadan_schedule" not in f.name]
     if not json_files:
         logger.warning(f"No JSON files found in {knowledge_dir}")
         return 0
@@ -74,6 +75,10 @@ def load_all_knowledge(
                 continue
 
             source = entry.get("source", json_file.stem)
+            author = entry.get("author", "")
+            book_title = entry.get("book_title", "")
+            page = entry.get("page", "")
+            source_url = entry.get("source_url", "")
 
             # Основной вопрос
             doc_id = f"{entry_id}_main"
@@ -85,6 +90,10 @@ def load_all_knowledge(
                 "category": category,
                 "tags": ",".join(tags) if tags else "",
                 "source": source,
+                "source_url": source_url,
+                "author": author,
+                "book_title": book_title,
+                "page": str(page) if page else "",
                 "is_alt": "false",
             })
 
@@ -101,6 +110,10 @@ def load_all_knowledge(
                     "category": category,
                     "tags": ",".join(tags) if tags else "",
                     "source": source,
+                    "source_url": source_url,
+                    "author": author,
+                    "book_title": book_title,
+                    "page": str(page) if page else "",
                     "is_alt": "true",
                 })
 

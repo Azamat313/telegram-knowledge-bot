@@ -1,5 +1,5 @@
 """
-Точка входа: запуск устаз Telegram-бота (отдельный процесс).
+Точка входа: запуск модератор Telegram-бота (отдельный процесс).
 Использует ту же БД что и пользовательский бот.
 Для доставки ответов пользователям нужен user_bot (BOT_TOKEN).
 """
@@ -14,10 +14,9 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from loguru import logger
 
-from config import BOT_TOKEN, USTAZ_BOT_TOKEN, LOG_PATH
+from config import BOT_TOKEN, MODERATOR_BOT_TOKEN, LOG_PATH
 from database.db import Database
-from ustaz_bot.handlers import ustaz, auth as ustaz_auth
-from ustaz_bot.middlewares.ustaz_auth import UstazAuthMiddleware
+from moderator_bot.handlers import moderator
 
 
 def setup_logging():
@@ -37,30 +36,25 @@ def setup_logging():
 
 async def main():
     setup_logging()
-    logger.info("Starting ustaz bot...")
+    logger.info("Starting moderator bot...")
 
-    if not USTAZ_BOT_TOKEN:
-        logger.error("USTAZ_BOT_TOKEN is not set! Check .env file.")
+    if not MODERATOR_BOT_TOKEN:
+        logger.error("MODERATOR_BOT_TOKEN is not set! Check .env file.")
         sys.exit(1)
 
     # Инициализация БД (общая с пользовательским ботом)
     db = Database()
     await db.connect()
 
-    # Устаз-бот
-    ustaz_bot = Bot(
-        token=USTAZ_BOT_TOKEN,
+    # Модератор-бот
+    mod_bot = Bot(
+        token=MODERATOR_BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher(storage=MemoryStorage())
 
-    # Middleware авторизации
-    dp.message.middleware(UstazAuthMiddleware(db))
-    dp.callback_query.middleware(UstazAuthMiddleware(db))
-
     # Роутеры
-    dp.include_router(ustaz_auth.router)
-    dp.include_router(ustaz.router)
+    dp.include_router(moderator.router)
 
     # User bot для доставки ответов пользователям
     user_bot = None
@@ -79,16 +73,16 @@ async def main():
         "user_bot": user_bot,
     })
 
-    logger.info("Ustaz bot is starting polling...")
+    logger.info("Moderator bot is starting polling...")
 
     try:
-        await dp.start_polling(ustaz_bot)
+        await dp.start_polling(mod_bot)
     finally:
         await db.close()
-        await ustaz_bot.session.close()
+        await mod_bot.session.close()
         if user_bot:
             await user_bot.session.close()
-        logger.info("Ustaz bot stopped")
+        logger.info("Moderator bot stopped")
 
 
 if __name__ == "__main__":

@@ -117,7 +117,11 @@ class SearchEngine:
                 "answer": metadata.get("answer", ""),
                 "similarity": similarity,
                 "source": metadata.get("source", ""),
+                "source_url": metadata.get("source_url", ""),
                 "category": metadata.get("category", ""),
+                "author": metadata.get("author", ""),
+                "book_title": metadata.get("book_title", ""),
+                "page": metadata.get("page", ""),
             })
 
         return output

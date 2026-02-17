@@ -1,7 +1,8 @@
 """
 Асинхронная работа с SQLite через aiosqlite.
 Управление пользователями, логами запросов, подписками,
-историей диалогов, устаз-консультациями.
+историей диалогов, устаз-консультациями, расписанием Рамадана,
+модераторскими тикетами.
 """
 
 import os
@@ -35,16 +36,33 @@ class Database:
         await self._conn.executescript(CREATE_TABLES_SQL)
         await self._conn.commit()
 
-        # Миграция: добавляем telegram_payment_charge_id если отсутствует
-        try:
-            await self._conn.execute(
-                "ALTER TABLE subscriptions ADD COLUMN telegram_payment_charge_id TEXT"
-            )
-            await self._conn.commit()
-        except Exception:
-            pass  # Колонка уже существует
+        # Миграции для существующих БД
+        await self._run_migrations()
 
         logger.info(f"Database connected: {self.db_path} (WAL mode)")
+
+    async def _run_migrations(self):
+        """Запуск миграций для добавления новых колонок."""
+        migrations = [
+            ("subscriptions", "telegram_payment_charge_id", "TEXT"),
+            ("users", "city", "TEXT DEFAULT NULL"),
+            ("users", "language", "TEXT DEFAULT 'kk'"),
+            ("users", "is_onboarded", "BOOLEAN DEFAULT FALSE"),
+            ("users", "city_lat", "REAL DEFAULT NULL"),
+            ("users", "city_lng", "REAL DEFAULT NULL"),
+        ]
+        for table, column, col_type in migrations:
+            try:
+                await self._conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"
+                )
+                await self._conn.commit()
+                logger.info(f"Migration: added {table}.{column}")
+            except Exception:
+                pass  # Колонка уже существует
+
+        # Миграция существующих пользователей: city → city_lat/city_lng
+        await self._migrate_city_coordinates()
 
     async def close(self):
         """Закрытие соединения."""
@@ -132,6 +150,112 @@ class Database:
                 return False
 
         return True
+
+    # ──────────────────── User City/Language/Onboarding ────────────────────
+
+    async def update_user_city(self, telegram_id: int, city: str):
+        """Обновить город пользователя."""
+        await self._conn.execute(
+            "UPDATE users SET city = ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
+            (city, telegram_id),
+        )
+        await self._conn.commit()
+
+    async def update_user_language(self, telegram_id: int, language: str):
+        """Обновить язык пользователя."""
+        await self._conn.execute(
+            "UPDATE users SET language = ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
+            (language, telegram_id),
+        )
+        await self._conn.commit()
+
+    async def set_user_onboarded(self, telegram_id: int):
+        """Пометить пользователя как прошедшего онбординг."""
+        await self._conn.execute(
+            "UPDATE users SET is_onboarded = TRUE, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
+            (telegram_id,),
+        )
+        await self._conn.commit()
+
+    async def update_user_city_full(
+        self, telegram_id: int, city_name: str, lat: float, lng: float
+    ):
+        """Сохранить город + координаты пользователя."""
+        await self._conn.execute(
+            "UPDATE users SET city = ?, city_lat = ?, city_lng = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
+            (city_name, lat, lng, telegram_id),
+        )
+        await self._conn.commit()
+
+    async def _migrate_city_coordinates(self):
+        """Миграция существующих пользователей: заполнить city_lat/city_lng из CITY_COORDINATES."""
+        from core.cities import CITY_COORDINATES
+
+        cursor = await self._conn.execute(
+            "SELECT telegram_id, city FROM users WHERE city IS NOT NULL AND city_lat IS NULL"
+        )
+        rows = await cursor.fetchall()
+        migrated = 0
+        for row in rows:
+            coords = CITY_COORDINATES.get(row["city"])
+            if coords:
+                await self._conn.execute(
+                    "UPDATE users SET city_lat = ?, city_lng = ? WHERE telegram_id = ?",
+                    (coords[0], coords[1], row["telegram_id"]),
+                )
+                migrated += 1
+        if migrated:
+            await self._conn.commit()
+            logger.info(f"Migrated {migrated} users with city coordinates")
+
+    # ──────────────────── Prayer Times Cache ────────────────────
+
+    async def cache_prayer_times(
+        self, city_name: str, lat: float, lng: float, prayer_list: list[dict]
+    ):
+        """Массовый INSERT времён намаза из API-ответа."""
+        for item in prayer_list:
+            await self._conn.execute(
+                "INSERT OR REPLACE INTO prayer_times_cache "
+                "(city_name, lat, lng, date, imsak, fajr, sunrise, dhuhr, asr, maghrib, isha) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    city_name, lat, lng,
+                    item.get("Date", ""),
+                    item.get("imsak", ""),
+                    item.get("fajr", ""),
+                    item.get("sunrise", ""),
+                    item.get("dhuhr", ""),
+                    item.get("asr", ""),
+                    item.get("maghrib", ""),
+                    item.get("isha", ""),
+                ),
+            )
+        await self._conn.commit()
+        logger.info(f"Cached {len(prayer_list)} prayer times for {city_name} ({lat}, {lng})")
+
+    async def get_cached_prayer_times(
+        self, lat: float, lng: float, date_from: str, date_to: str
+    ) -> list[dict]:
+        """Получить кэшированные времена намаза за период."""
+        cursor = await self._conn.execute(
+            "SELECT * FROM prayer_times_cache "
+            "WHERE lat = ? AND lng = ? AND date >= ? AND date <= ? "
+            "ORDER BY date",
+            (lat, lng, date_from, date_to),
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
+    async def is_prayer_times_cached(self, lat: float, lng: float, year: int) -> bool:
+        """Проверить наличие кэшированных данных за год."""
+        cursor = await self._conn.execute(
+            "SELECT COUNT(*) as cnt FROM prayer_times_cache "
+            "WHERE lat = ? AND lng = ? AND date LIKE ?",
+            (lat, lng, f"{year}-%"),
+        )
+        row = await cursor.fetchone()
+        return row["cnt"] > 0
 
     # ──────────────────────── Subscriptions ────────────────────────
 
@@ -486,3 +610,134 @@ class Database:
         used = await self.get_ustaz_usage(user_telegram_id)
         remaining = max(0, USTAZ_MONTHLY_LIMIT - used)
         return remaining > 0, remaining
+
+    # ──────────────────────── Ramadan Schedule ────────────────────────
+
+    async def upsert_ramadan_schedule(
+        self,
+        city: str,
+        day_number: int,
+        gregorian_date: str,
+        day_of_week: str,
+        fajr: str,
+        sunrise: str,
+        dhuhr: str,
+        asr: str,
+        maghrib: str,
+        isha: str,
+        is_special: bool = False,
+        special_name_kk: str = None,
+        special_name_ru: str = None,
+    ):
+        """Добавить/обновить запись расписания."""
+        await self._conn.execute(
+            "INSERT INTO ramadan_schedule "
+            "(city, day_number, gregorian_date, day_of_week, fajr, sunrise, dhuhr, asr, maghrib, isha, "
+            "is_special, special_name_kk, special_name_ru) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(city, day_number) DO UPDATE SET "
+            "gregorian_date=?, day_of_week=?, fajr=?, sunrise=?, dhuhr=?, asr=?, maghrib=?, isha=?, "
+            "is_special=?, special_name_kk=?, special_name_ru=?",
+            (
+                city, day_number, gregorian_date, day_of_week,
+                fajr, sunrise, dhuhr, asr, maghrib, isha,
+                is_special, special_name_kk, special_name_ru,
+                gregorian_date, day_of_week,
+                fajr, sunrise, dhuhr, asr, maghrib, isha,
+                is_special, special_name_kk, special_name_ru,
+            ),
+        )
+        await self._conn.commit()
+
+    async def get_ramadan_schedule(self, city: str) -> list[dict]:
+        """Получить расписание Рамадана для города."""
+        cursor = await self._conn.execute(
+            "SELECT * FROM ramadan_schedule WHERE city = ? ORDER BY day_number",
+            (city,),
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
+    async def get_today_schedule(self, city: str, day_number: int) -> Optional[dict]:
+        """Получить расписание на конкретный день."""
+        cursor = await self._conn.execute(
+            "SELECT * FROM ramadan_schedule WHERE city = ? AND day_number = ?",
+            (city, day_number),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_schedule_count(self, city: str = None) -> int:
+        """Количество записей расписания."""
+        if city:
+            cursor = await self._conn.execute(
+                "SELECT COUNT(*) as cnt FROM ramadan_schedule WHERE city = ?", (city,)
+            )
+        else:
+            cursor = await self._conn.execute(
+                "SELECT COUNT(*) as cnt FROM ramadan_schedule"
+            )
+        row = await cursor.fetchone()
+        return row["cnt"]
+
+    # ──────────────────────── Moderator Tickets ────────────────────────
+
+    async def create_moderator_ticket(
+        self, user_telegram_id: int, message_text: str
+    ) -> int:
+        """Создать тикет для модератора. Возвращает ID."""
+        cursor = await self._conn.execute(
+            "INSERT INTO moderator_tickets (user_telegram_id, message_text) VALUES (?, ?)",
+            (user_telegram_id, message_text),
+        )
+        await self._conn.commit()
+        logger.info(f"Moderator ticket created: user={user_telegram_id}, id={cursor.lastrowid}")
+        return cursor.lastrowid
+
+    async def get_moderator_ticket(self, ticket_id: int) -> Optional[dict]:
+        """Получить тикет по ID."""
+        cursor = await self._conn.execute(
+            "SELECT t.*, u.username, u.first_name FROM moderator_tickets t "
+            "LEFT JOIN users u ON t.user_telegram_id = u.telegram_id "
+            "WHERE t.id = ?",
+            (ticket_id,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_pending_tickets(self, limit: int = 20) -> list[dict]:
+        """Получить очередь ожидающих тикетов."""
+        cursor = await self._conn.execute(
+            "SELECT t.*, u.username, u.first_name FROM moderator_tickets t "
+            "LEFT JOIN users u ON t.user_telegram_id = u.telegram_id "
+            "WHERE t.status = 'pending' "
+            "ORDER BY t.created_at ASC LIMIT ?",
+            (limit,),
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
+    async def answer_ticket(
+        self, ticket_id: int, response_text: str
+    ) -> Optional[dict]:
+        """Ответить на тикет. Возвращает обновлённую запись."""
+        await self._conn.execute(
+            "UPDATE moderator_tickets SET moderator_response = ?, status = 'answered', "
+            "responded_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (response_text, ticket_id),
+        )
+        await self._conn.commit()
+        return await self.get_moderator_ticket(ticket_id)
+
+    async def get_ticket_stats(self) -> dict:
+        """Статистика тикетов модератора."""
+        stats = {}
+        for status in ("pending", "answered"):
+            cursor = await self._conn.execute(
+                "SELECT COUNT(*) as cnt FROM moderator_tickets WHERE status = ?",
+                (status,),
+            )
+            row = await cursor.fetchone()
+            stats[status] = row["cnt"]
+        cursor = await self._conn.execute("SELECT COUNT(*) as cnt FROM moderator_tickets")
+        row = await cursor.fetchone()
+        stats["total"] = row["cnt"]
+        return stats

@@ -1,6 +1,7 @@
 """
 Основные обработчики устаз-бота.
 /start, /queue, /mystats, приём и ответ на вопросы.
+Показываем ТОЛЬКО вопрос (без истории, без AI-ответа).
 """
 
 from aiogram import Router, F
@@ -44,7 +45,7 @@ async def cmd_start(message: Message, db: Database, **kwargs):
 
 @router.message(Command("queue"))
 async def cmd_queue(message: Message, db: Database, **kwargs):
-    """Показать очередь ожидающих вопросов."""
+    """Показать очередь ожидающих вопросов (только вопрос, без истории/AI)."""
     # Проверяем, нет ли у устаза активного вопроса
     active = await db.get_ustaz_in_progress(message.from_user.id)
     if active:
@@ -66,11 +67,8 @@ async def cmd_queue(message: Message, db: Database, **kwargs):
         user_name = c.get("first_name") or c.get("username") or str(c["user_telegram_id"])
         text = (
             f"#{c['id']} | {user_name}\n"
-            f"Сұрақ: {c['question_text'][:200]}\n"
+            f"Сұрақ: {c['question_text'][:300]}\n"
         )
-        if c.get("ai_answer_text"):
-            text += f"\nAI жауабы: {c['ai_answer_text'][:150]}...\n"
-
         await message.answer(text, reply_markup=get_queue_item_keyboard(c["id"]))
 
 
@@ -114,17 +112,12 @@ async def on_take_question(callback: CallbackQuery, db: Database, state: FSMCont
 
     consultation = await db.get_consultation(consultation_id)
 
-    # Формируем полную информацию о вопросе
-    text = f"✅ Сұрақ #{consultation_id} қабылданды!\n\n"
-    text += f"Сұрақ: {consultation['question_text']}\n"
-
-    if consultation.get("ai_answer_text"):
-        text += f"\nAI жауабы:\n{consultation['ai_answer_text'][:500]}\n"
-
-    if consultation.get("conversation_context"):
-        text += f"\nДиалог тарихы:\n{consultation['conversation_context'][:500]}\n"
-
-    text += f"\n{MSG_USTAZ_QUESTION_TAKEN}"
+    # Показываем только вопрос
+    text = (
+        f"✅ Сұрақ #{consultation_id} қабылданды!\n\n"
+        f"Сұрақ: {consultation['question_text']}\n\n"
+        f"{MSG_USTAZ_QUESTION_TAKEN}"
+    )
 
     await state.set_state(AnswerStates.waiting_for_answer)
     await state.update_data(consultation_id=consultation_id)

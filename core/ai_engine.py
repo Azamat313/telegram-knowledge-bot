@@ -1,9 +1,15 @@
 """
 ИИ-движок: OpenAI ChatGPT + локальный контекст из базы знаний.
 Используется openai SDK (async).
+
+Особенности:
+- "Білесіз бе?" suggestions после каждого ответа
+- Строгая фильтрация off-topic вопросов
+- Сигнализация неуверенности через маркер [СЕНІМСІЗ]
 """
 
 import asyncio
+import re
 
 from openai import AsyncOpenAI
 from loguru import logger
@@ -18,9 +24,41 @@ SYSTEM_PROMPT = (
     "3. Жауапты сұрақ тілінде бер (қазақша сұрақ — қазақша жауап, орысша сұрақ — орысша жауап).\n"
     "4. Жауап нақты, толық және түсінікті болсын.\n"
     "5. Аят немесе хадис келтірсең, дереккөзін көрсет.\n"
-    "6. Тек Рамазан, ораза, ибадат, ислам тақырыптарына жауап бер. Басқа тақырыптарға: "
-    "'Кешіріңіз, мен тек Рамазан және ислам тақырыптары бойынша жауап беремін.' деп жаз.\n"
+    "6. OFF-TOPIC ЕРЕЖЕСІ (ҚАТАҢ):\n"
+    "   - Егер сұрақ Рамазанға, оразаға, ибадатқа, исламға МҮЛДЕМ қатысы жоқ болса "
+    "(мысалы: спорт, ауа-райы, саясат, ойын-сауық, технология), "
+    "жауаптың бірінші жолында [OFF_TOPIC] деп жаз, содан кейін:\n"
+    "     Қазақша: 'Бұл сұрақтың оразаға қатысы жоқ. Мен тек Рамазан тақырыбы бойынша жауап беремін.'\n"
+    "     Орысша: 'Этот вопрос не относится к Рамадану. Я отвечаю только на вопросы о Рамадане.'\n"
+    "   - Егер сұрақ ислам тақырыбына жататын, бірақ тікелей Рамазанға қатысты болмаса "
+    "(мысалы: намаз, зекет, қажылық, неке), жауап бер, бірақ Рамазанмен байланыстыр.\n"
     "7. Ешқашан діни фетуа берме, тек кітаптар мен хадистердегі ақпаратты жеткіз.\n"
+    "8. Контексте кітап аты, автор немесе бет нөмірі берілсе, жауаптың соңында міндетті түрде көрсет:\n"
+    "   Қазақша: 📖 Дереккөз: \"Кітап аты\", Автор, б. 123\n"
+    "   Орысша: 📖 Источник: \"Название книги\", Автор, с. 123\n"
+    "9. Контексте source_url берілсе (islam.kz немесе muftyat.kz сілтемесі), "
+    "оны да дереккөзге қос:\n"
+    "   Қазақша: 🔗 Толығырақ: [сілтеме]\n"
+    "   Орысша: 🔗 Подробнее: [ссылка]\n"
+    "10. СЕНІМДІЛІК ЕРЕЖЕСІ:\n"
+    "   - Егер жауапқа СЕНІМДІ ЕМЕС болсаң (контекстте тікелей жауап жоқ, өз біліміңмен жауап бердің), "
+    "жауаптың соңына жаңа жолда [СЕНІМСІЗ] деп жаз.\n"
+    "   - Егер контексттен тікелей жауап тапсаң, [СЕНІМСІЗ] жазбай-ақ қой.\n"
+    "11. ҰСЫНЫСТАР (МІНДЕТТІ):\n"
+    "   Жауаптың ең соңында, жаңа жолдан 2-3 қатысты тақырыпты ұсын.\n"
+    "   Формат (сұрақ тілінде):\n"
+    "   Қазақша:\n"
+    "   [SUGGESTIONS]\n"
+    "   💡 Ораза ұстау кезінде тіс тазалауға бола ма?\n"
+    "   💡 Сәресіде су ішуді қашан тоқтату керек?\n"
+    "   💡 Оразаны бұзатын нәрселер қандай?\n"
+    "   Орысша:\n"
+    "   [SUGGESTIONS]\n"
+    "   💡 Можно ли чистить зубы во время поста?\n"
+    "   💡 Когда нужно прекратить прием пищи на сухур?\n"
+    "   💡 Что нарушает пост?\n"
+    "   МАҢЫЗДЫ: Ұсыныстар тек контексттегі ақпарат пен сұрақ тақырыбына қатысты болсын. "
+    "Жалпы ұсыныс жазба — тек сұраққа жақын тақырыптар.\n"
 )
 
 
@@ -34,12 +72,69 @@ def _build_context(search_results: list[dict]) -> str:
         source = r.get("source", "")
         question = r.get("question", "")
         answer = r.get("answer", "")
-        parts.append(
-            f"[{i}] Дереккөз: {source}\n"
-            f"Сұрақ: {question}\n"
-            f"Жауап: {answer}"
-        )
+        author = r.get("author", "")
+        book_title = r.get("book_title", "")
+        page = r.get("page", "")
+        source_url = r.get("source_url", "")
+
+        part = f"[{i}] Дереккөз: {source}\n"
+        if book_title:
+            part += f"Кітап: {book_title}\n"
+        if author:
+            part += f"Автор: {author}\n"
+        if page:
+            part += f"Бет: {page}\n"
+        if source_url:
+            part += f"source_url: {source_url}\n"
+        part += f"Сұрақ: {question}\nЖауап: {answer}"
+        parts.append(part)
     return "\n\n".join(parts)
+
+
+def parse_ai_response(answer_text: str) -> dict:
+    """
+    Парсит ответ ИИ, извлекая маркеры:
+    - [OFF_TOPIC] — вопрос не по теме
+    - [СЕНІМСІЗ] — ИИ не уверен в ответе
+    - [SUGGESTIONS] — предложения "Білесіз бе?"
+
+    Returns:
+        {
+            "answer": str (чистый текст без маркеров),
+            "is_off_topic": bool,
+            "is_uncertain": bool,
+            "suggestions": list[str],
+        }
+    """
+    is_off_topic = "[OFF_TOPIC]" in answer_text
+    is_uncertain = "[СЕНІМСІЗ]" in answer_text
+
+    # Извлекаем suggestions
+    suggestions = []
+    suggestions_text = ""
+    if "[SUGGESTIONS]" in answer_text:
+        parts = answer_text.split("[SUGGESTIONS]", 1)
+        answer_clean = parts[0].strip()
+        suggestions_text = parts[1].strip() if len(parts) > 1 else ""
+
+        for line in suggestions_text.split("\n"):
+            line = line.strip()
+            if line.startswith("💡"):
+                suggestion = line.lstrip("💡").strip()
+                if suggestion:
+                    suggestions.append(suggestion)
+    else:
+        answer_clean = answer_text
+
+    # Убираем маркеры из текста
+    answer_clean = answer_clean.replace("[OFF_TOPIC]", "").replace("[СЕНІМСІЗ]", "").strip()
+
+    return {
+        "answer": answer_clean,
+        "is_off_topic": is_off_topic,
+        "is_uncertain": is_uncertain,
+        "suggestions": suggestions[:3],  # Максимум 3
+    }
 
 
 class AIEngine:
@@ -70,6 +165,7 @@ class AIEngine:
         question: str,
         context_results: list[dict],
         conversation_history: list[dict] = None,
+        lang: str = "kk",
     ) -> dict:
         """
         Отправляет вопрос + контекст из базы знаний в ChatGPT.
@@ -78,16 +174,33 @@ class AIEngine:
             question: вопрос пользователя
             context_results: результаты поиска из ChromaDB (топ-5)
             conversation_history: история диалога [{role, message_text}]
+            lang: язык пользователя (kk/ru)
 
         Returns:
-            {"answer": str, "sources": list[str], "from_ai": True}
+            {
+                "answer": str,
+                "sources": list[str],
+                "source_urls": list[str],
+                "from_ai": True,
+                "is_off_topic": bool,
+                "is_uncertain": bool,
+                "suggestions": list[str],
+            }
         """
         if not self.is_available():
             logger.error("AI engine not available")
-            return {"answer": None, "sources": [], "from_ai": True}
+            return {
+                "answer": None, "sources": [], "source_urls": [],
+                "from_ai": True, "is_off_topic": False,
+                "is_uncertain": False, "suggestions": [],
+            }
 
         context = _build_context(context_results)
         sources = list({r.get("source", "") for r in context_results if r.get("source")})
+        source_urls = list({
+            r.get("source_url", "") for r in context_results
+            if r.get("source_url")
+        })
 
         # Строим messages для ChatGPT
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -98,13 +211,25 @@ class AIEngine:
                 role = "user" if msg["role"] == "user" else "assistant"
                 messages.append({"role": role, "content": msg["message_text"]})
 
+        # Выбираем язык инструкции
+        if lang == "ru":
+            lang_instruction = (
+                "ВАЖНО: Пользователь предпочитает русский язык. "
+                "Отвечай на русском, если вопрос не задан явно на казахском."
+            )
+        else:
+            lang_instruction = (
+                "МАҢЫЗДЫ: Пайдаланушы қазақ тілін таңдаған. "
+                "Жауапты қазақша бер, егер сұрақ анық орысша болмаса."
+            )
+
         # Формируем пользовательский запрос с контекстом
         user_prompt = (
             f"Контекст (база знаний):\n{context}\n\n"
             f"Пайдаланушы сұрағы: {question}\n\n"
-            f"МАҢЫЗДЫ: Жауапты сұрақ тілінде бер! Егер сұрақ орысша болса — орысша жауап бер. "
-            f"Егер қазақша болса — қазақша жауап бер.\n"
-            f"Контекстті пайдаланып жауап бер. Егер диалог тарихы болса, контекстке сүйен."
+            f"{lang_instruction}\n"
+            f"Контекстті пайдаланып жауап бер. Егер диалог тарихы болса, контекстке сүйен.\n"
+            f"Ережелердегі [SUGGESTIONS] бөлімін ұмытпа — жауаптың соңына міндетті түрде қос."
         )
         messages.append({"role": "user", "content": user_prompt})
 
@@ -122,20 +247,37 @@ class AIEngine:
 
             if not answer_text:
                 logger.warning("ChatGPT returned empty response")
-                return {"answer": None, "sources": sources, "from_ai": True}
+                return {
+                    "answer": None, "sources": sources, "source_urls": source_urls,
+                    "from_ai": True, "is_off_topic": False,
+                    "is_uncertain": False, "suggestions": [],
+                }
 
-            # Проверяем, не ответил ли ИИ что тема вне его области
-            off_topic_markers = [
-                "тек рамазан",
-                "тек ислам тақырыптары",
-                "мен тек рамазан",
-            ]
-            if any(m in answer_text.lower() for m in off_topic_markers):
-                return {"answer": answer_text, "sources": [], "from_ai": True}
+            # Парсим ответ
+            parsed = parse_ai_response(answer_text)
 
-            logger.info(f"AI answer: {len(answer_text)} chars, sources={sources}")
-            return {"answer": answer_text, "sources": sources, "from_ai": True}
+            logger.info(
+                f"AI answer: {len(parsed['answer'])} chars, "
+                f"off_topic={parsed['is_off_topic']}, "
+                f"uncertain={parsed['is_uncertain']}, "
+                f"suggestions={len(parsed['suggestions'])}, "
+                f"sources={sources}"
+            )
+
+            return {
+                "answer": parsed["answer"],
+                "sources": sources if not parsed["is_off_topic"] else [],
+                "source_urls": source_urls if not parsed["is_off_topic"] else [],
+                "from_ai": True,
+                "is_off_topic": parsed["is_off_topic"],
+                "is_uncertain": parsed["is_uncertain"],
+                "suggestions": parsed["suggestions"],
+            }
 
         except Exception as e:
             logger.error(f"AI engine error: {e}")
-            return {"answer": None, "sources": [], "from_ai": True}
+            return {
+                "answer": None, "sources": [], "source_urls": [],
+                "from_ai": True, "is_off_topic": False,
+                "is_uncertain": False, "suggestions": [],
+            }

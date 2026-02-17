@@ -6,6 +6,7 @@ load_dotenv()
 # Telegram
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 USTAZ_BOT_TOKEN = os.getenv("USTAZ_BOT_TOKEN", "")
+MODERATOR_BOT_TOKEN = os.getenv("MODERATOR_BOT_TOKEN", "")
 ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 
 # OpenAI ChatGPT

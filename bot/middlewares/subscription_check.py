@@ -1,15 +1,19 @@
 """
 Middleware для проверки подписки и лимитов бесплатных ответов.
+Пропускает пользователей в OnboardingStates.
 """
 
 from typing import Any, Awaitable, Callable, Dict
 
 from aiogram import BaseMiddleware
 from aiogram.types import Message
+from aiogram.fsm.context import FSMContext
 
-from config import FREE_ANSWERS_LIMIT, MSG_LIMIT_REACHED
+from config import FREE_ANSWERS_LIMIT
+from core.messages import get_msg
 from database.db import Database
 from bot.keyboards.inline import get_subscription_keyboard
+from bot.states.onboarding import OnboardingStates
 
 
 class SubscriptionCheckMiddleware(BaseMiddleware):
@@ -30,11 +34,23 @@ class SubscriptionCheckMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         user_id = event.from_user.id
+
+        # Пропускаем пользователей в онбординге
+        state: FSMContext = data.get("state")
+        if state:
+            current_state = await state.get_state()
+            if current_state and current_state.startswith("OnboardingStates:"):
+                return await handler(event, data)
+
         user = await self.db.get_or_create_user(
             telegram_id=user_id,
             username=event.from_user.username,
             first_name=event.from_user.first_name,
         )
+
+        # Добавляем язык пользователя в data для хендлеров
+        user_lang = user.get("language", "kk")
+        data["user_lang"] = user_lang
 
         # Проверяем подписку
         is_subscribed = await self.db.check_subscription(user_id)
@@ -46,7 +62,7 @@ class SubscriptionCheckMiddleware(BaseMiddleware):
         # Проверяем лимит бесплатных ответов
         if user["answers_count"] >= FREE_ANSWERS_LIMIT:
             await event.answer(
-                MSG_LIMIT_REACHED.format(limit=FREE_ANSWERS_LIMIT),
+                get_msg("limit_reached", user_lang, limit=FREE_ANSWERS_LIMIT),
                 reply_markup=get_subscription_keyboard(),
             )
             return None

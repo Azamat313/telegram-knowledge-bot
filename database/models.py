@@ -11,6 +11,9 @@ CREATE TABLE IF NOT EXISTS users (
     answers_count INTEGER DEFAULT 0,
     is_subscribed BOOLEAN DEFAULT FALSE,
     subscription_expires_at DATETIME NULL,
+    city TEXT DEFAULT NULL,
+    language TEXT DEFAULT 'kk',
+    is_onboarded BOOLEAN DEFAULT FALSE,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -83,6 +86,51 @@ CREATE TABLE IF NOT EXISTS ustaz_usage (
     UNIQUE(user_telegram_id, month_year)
 );
 
+CREATE TABLE IF NOT EXISTS ramadan_schedule (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    city TEXT NOT NULL,
+    day_number INTEGER NOT NULL,
+    gregorian_date TEXT NOT NULL,
+    day_of_week TEXT NOT NULL,
+    fajr TEXT NOT NULL,
+    sunrise TEXT NOT NULL,
+    dhuhr TEXT NOT NULL,
+    asr TEXT NOT NULL,
+    maghrib TEXT NOT NULL,
+    isha TEXT NOT NULL,
+    is_special BOOLEAN DEFAULT FALSE,
+    special_name_kk TEXT,
+    special_name_ru TEXT,
+    UNIQUE(city, day_number)
+);
+
+CREATE TABLE IF NOT EXISTS moderator_tickets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_telegram_id BIGINT NOT NULL,
+    message_text TEXT NOT NULL,
+    status TEXT DEFAULT 'pending',
+    moderator_response TEXT,
+    responded_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS prayer_times_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    city_name TEXT NOT NULL,
+    lat REAL NOT NULL,
+    lng REAL NOT NULL,
+    date TEXT NOT NULL,
+    imsak TEXT,
+    fajr TEXT,
+    sunrise TEXT,
+    dhuhr TEXT,
+    asr TEXT,
+    maghrib TEXT,
+    isha TEXT,
+    fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(lat, lng, date)
+);
+
 CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id);
 CREATE INDEX IF NOT EXISTS idx_query_logs_user ON query_logs(user_telegram_id);
 CREATE INDEX IF NOT EXISTS idx_query_logs_created ON query_logs(created_at);
@@ -93,4 +141,8 @@ CREATE INDEX IF NOT EXISTS idx_consultations_status ON consultations(status);
 CREATE INDEX IF NOT EXISTS idx_consultations_user ON consultations(user_telegram_id);
 CREATE INDEX IF NOT EXISTS idx_consultations_ustaz ON consultations(ustaz_telegram_id);
 CREATE INDEX IF NOT EXISTS idx_ustaz_usage_user_month ON ustaz_usage(user_telegram_id, month_year);
+CREATE INDEX IF NOT EXISTS idx_ramadan_schedule_city ON ramadan_schedule(city);
+CREATE INDEX IF NOT EXISTS idx_moderator_tickets_status ON moderator_tickets(status);
+CREATE INDEX IF NOT EXISTS idx_moderator_tickets_user ON moderator_tickets(user_telegram_id);
+CREATE INDEX IF NOT EXISTS idx_prayer_cache_coords_date ON prayer_times_cache(lat, lng, date);
 """
