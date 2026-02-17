@@ -1,104 +1,123 @@
 """
 Обработчики Рамадан-календаря.
-Отображение расписания по неделям с пагинацией.
+Полный календарь на 30 дней без пагинации.
 Данные загружаются из API muftyat.kz и кэшируются в prayer_times_cache.
 """
 
-from datetime import datetime
+from datetime import datetime, date
 
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery
 from loguru import logger
 
 from database.db import Database
-from core.messages import get_msg
 from core.muftyat_api import MuftyatAPI
 from core.ramadan_calendar import (
     get_ramadan_day_number, is_ramadan,
-    ensure_prayer_times, filter_ramadan_days,
+    ensure_prayer_times,
     RAMADAN_START, RAMADAN_END,
 )
 
 router = Router()
 
-
-def _build_week_buttons(lang: str = "kk", current_week: int = 1) -> InlineKeyboardMarkup:
-    """Кнопки пагинации по неделям."""
-    buttons = []
-    for w in range(1, 6):  # 5 недель максимум (30 дней)
-        label = get_msg("calendar_week", lang, n=w)
-        if w == current_week:
-            label = f"• {label} •"
-        buttons.append(InlineKeyboardButton(
-            text=label,
-            callback_data=f"cal_week:{w}",
-        ))
-    # Разбиваем на 2 ряда
-    return InlineKeyboardMarkup(inline_keyboard=[
-        buttons[:3],
-        buttons[3:],
-    ])
+# Дни недели
+DOW_KK = {0: "Дс", 1: "Сс", 2: "Ср", 3: "Бс", 4: "Жм", 5: "Сб", 6: "Жк"}
+DOW_RU = {0: "Пн", 1: "Вт", 2: "Ср", 3: "Чт", 4: "Пт", 5: "Сб", 6: "Вс"}
 
 
-def _format_calendar_week(
+def _format_full_calendar(
     schedule: list[dict],
-    week: int,
     city: str,
     lang: str = "kk",
 ) -> str:
-    """Сформировать текст календаря на одну неделю."""
+    """Сформировать полный красивый календарь на весь Рамадан."""
     today_day = get_ramadan_day_number()
+    dow_names = DOW_KK if lang == "kk" else DOW_RU
 
-    # Заголовок
-    title = get_msg("calendar_title", lang, city=city)
-    sahoor_label = get_msg("calendar_sahoor", lang)
-    iftar_label = get_msg("calendar_iftar", lang)
+    # === Заголовок ===
+    if lang == "ru":
+        lines = ["🌙 <b>РАМАДАН 2026</b>"]
+        lines.append(f"📍 {city}")
+    else:
+        lines = ["🌙 <b>РАМАЗАН 2026</b>"]
+        lines.append(f"📍 {city}")
 
-    lines = [f"<b>{title}</b>\n"]
+    lines.append("")
 
-    # Сегодняшний день
+    # === Сегодняшний день (выделенный блок) ===
     if today_day and 1 <= today_day <= len(schedule):
         today_info = schedule[today_day - 1]
         try:
-            dow = datetime.strptime(today_info["date"], "%Y-%m-%d").strftime("%A")
+            dt = datetime.strptime(today_info["date"], "%Y-%m-%d")
+            dow = dow_names.get(dt.weekday(), "")
         except (ValueError, KeyError):
             dow = ""
-        lines.append(
-            get_msg("calendar_today", lang,
-                    day=today_day, date=today_info["date"],
-                    dow=dow)
-        )
-        lines.append(
-            f"{sahoor_label}: <b>{today_info['fajr']}</b>  |  "
-            f"{iftar_label}: <b>{today_info['maghrib']}</b>"
-        )
+
+        day_date = today_info["date"][5:]  # MM-DD
+        fajr = today_info["fajr"]
+        maghrib = today_info["maghrib"]
+
+        if lang == "ru":
+            lines.append(f"📌 <b>СЕГОДНЯ: {today_day}-й день</b> ({day_date}, {dow})")
+            lines.append(f"    🌅 Сухур:  <b>{fajr}</b>")
+            lines.append(f"    🌇 Ифтар:  <b>{maghrib}</b>")
+        else:
+            lines.append(f"📌 <b>БҮГІН: {today_day}-күн</b> ({day_date}, {dow})")
+            lines.append(f"    🌅 Сәресі:   <b>{fajr}</b>")
+            lines.append(f"    🌇 Ауызашар: <b>{maghrib}</b>")
+
         lines.append("")
+    elif not is_ramadan():
+        days_left = (RAMADAN_START - date.today()).days
+        if days_left > 0:
+            if lang == "ru":
+                lines.append(f"⏳ До Рамадана: <b>{days_left} дн.</b>")
+            else:
+                lines.append(f"⏳ Рамазанға: <b>{days_left} күн</b>")
+            lines.append("")
 
-    # Таблица недели
-    start = (week - 1) * 7
-    end = min(start + 7, len(schedule))
-    week_days = schedule[start:end]
+    # === Таблица ===
+    lines.append("▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬")
 
-    if not week_days:
-        return "\n".join(lines) + "\n(Бұл аптада күн жоқ)"
+    if lang == "ru":
+        lines.append("<code> №  Дата   Дн  Сухур  Ифтар</code>")
+    else:
+        lines.append("<code> №  Күні   Кн  Сәрес  Ауыз.</code>")
 
-    lines.append("━━━━━━━━━━━━━━━━━━━━")
-    header = get_msg("calendar_header", lang)
-    lines.append(f"<code>{header}</code>")
+    lines.append("▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬")
 
-    for i, day_info in enumerate(week_days):
-        day_num = start + i + 1
-        date_str = day_info["date"]
+    for i, day_info in enumerate(schedule):
+        day_num = i + 1
+        date_str = day_info["date"][5:]  # MM-DD → "02-19"
         fajr = day_info["fajr"]
         maghrib = day_info["maghrib"]
 
-        # Маркер текущего дня
-        marker = " 👈" if today_day and day_num == today_day else ""
+        try:
+            dt = datetime.strptime(day_info["date"], "%Y-%m-%d")
+            dow = dow_names.get(dt.weekday(), "  ")
+        except (ValueError, KeyError):
+            dow = "  "
 
-        line = f"{day_num:>2}  {date_str}  {fajr:>5}   {maghrib:>5}{marker}"
+        # Маркер текущего дня
+        if today_day and day_num == today_day:
+            marker = " ◀"
+        else:
+            marker = ""
+
+        line = f"{day_num:>2}  {date_str}  {dow}  {fajr}  {maghrib}{marker}"
         lines.append(f"<code>{line}</code>")
 
-    lines.append("━━━━━━━━━━━━━━━━━━━━")
+        # Визуальный разделитель каждые 10 дней
+        if day_num % 10 == 0 and day_num < len(schedule):
+            lines.append("<code>  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─</code>")
+
+    lines.append("▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬")
+
+    # Подпись
+    if lang == "ru":
+        lines.append("🌅 Сухур — прекратить еду  |  🌇 Ифтар — разговение")
+    else:
+        lines.append("🌅 Сәресі — тамақ тоқтату  |  🌇 Ауызашар")
 
     return "\n".join(lines)
 
@@ -117,11 +136,8 @@ async def _get_ramadan_schedule(
     return all_days
 
 
-async def _show_calendar(
-    target, db: Database, muftyat_api: MuftyatAPI,
-    user_id: int, week: int = 1, edit: bool = False,
-):
-    """Показать календарь (для message и callback)."""
+async def _show_calendar(target, db: Database, muftyat_api: MuftyatAPI, user_id: int, edit: bool = False):
+    """Показать полный календарь."""
     user = await db.get_user(user_id)
     lang = user.get("language", "kk") if user else "kk"
     city = user.get("city") if user else None
@@ -129,7 +145,10 @@ async def _show_calendar(
     lng = user.get("city_lng") if user else None
 
     if not city or lat is None or lng is None:
-        text = get_msg("calendar_no_city", lang)
+        if lang == "ru":
+            text = "📍 Сначала выберите город: /start"
+        else:
+            text = "📍 Алдымен қалаңызды таңдаңыз: /start"
         if edit and hasattr(target, "edit_text"):
             await target.edit_text(text)
         else:
@@ -138,55 +157,39 @@ async def _show_calendar(
 
     schedule = await _get_ramadan_schedule(db, muftyat_api, city, lat, lng)
     if not schedule:
-        text = get_msg("calendar_not_ramadan", lang)
+        if lang == "ru":
+            text = "Рамадан ещё не начался или уже закончился."
+        else:
+            text = "Рамазан әлі басталмаған немесе аяқталған."
         if edit and hasattr(target, "edit_text"):
             await target.edit_text(text)
         else:
             await target.answer(text)
         return
 
-    # Определяем текущую неделю
-    today_day = get_ramadan_day_number()
-    if week == 0 and today_day:
-        week = (today_day - 1) // 7 + 1
-    elif week == 0:
-        week = 1
-
-    text = _format_calendar_week(schedule, week, city, lang)
-    keyboard = _build_week_buttons(lang, week)
+    text = _format_full_calendar(schedule, city, lang)
 
     if edit and hasattr(target, "edit_text"):
-        await target.edit_text(text, reply_markup=keyboard)
+        await target.edit_text(text)
     else:
-        await target.answer(text, reply_markup=keyboard)
+        await target.answer(text)
 
 
 # Казахский текст кнопки
 @router.message(F.text == "📅 Күнтізбе")
 async def btn_calendar_kk(message: Message, db: Database, muftyat_api: MuftyatAPI, **kwargs):
-    await _show_calendar(message, db, muftyat_api, message.from_user.id, week=0)
+    await _show_calendar(message, db, muftyat_api, message.from_user.id)
 
 
 # Русский текст кнопки
 @router.message(F.text == "📅 Календарь")
 async def btn_calendar_ru(message: Message, db: Database, muftyat_api: MuftyatAPI, **kwargs):
-    await _show_calendar(message, db, muftyat_api, message.from_user.id, week=0)
+    await _show_calendar(message, db, muftyat_api, message.from_user.id)
 
 
 # Inline-кнопка календаря под ответом ИИ
 @router.callback_query(F.data == "show_calendar")
 async def on_show_calendar(callback: CallbackQuery, db: Database, muftyat_api: MuftyatAPI, **kwargs):
     """Кнопка календаря под ответом."""
-    await _show_calendar(callback.message, db, muftyat_api, callback.from_user.id, week=0)
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("cal_week:"))
-async def on_calendar_week(callback: CallbackQuery, db: Database, muftyat_api: MuftyatAPI, **kwargs):
-    """Переключение недели в календаре."""
-    week = int(callback.data.split(":")[1])
-    await _show_calendar(
-        callback.message, db, muftyat_api,
-        callback.from_user.id, week=week, edit=True,
-    )
+    await _show_calendar(callback.message, db, muftyat_api, callback.from_user.id)
     await callback.answer()
