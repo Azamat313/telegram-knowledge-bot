@@ -143,9 +143,12 @@ async def on_suggestion_click(
     if not suggestion_text:
         return
 
-    # Отправляем вопрос как сообщение и обрабатываем
-    fake_msg = await callback.message.answer(f"💬 {suggestion_text}")
-    await _process_question(fake_msg, db, search_engine, ai_engine, suggestion_text, **kwargs)
+    # Показываем вопрос пользователя и обрабатываем
+    shown_msg = await callback.message.answer(f"💬 {suggestion_text}")
+    await _process_question(
+        shown_msg, db, search_engine, ai_engine, suggestion_text,
+        override_user_id=callback.from_user.id, **kwargs
+    )
 
 
 @router.message(F.content_type != "text")
@@ -181,10 +184,11 @@ async def _process_question(
     search_engine: SearchEngine,
     ai_engine: AIEngine,
     original_text: str,
+    override_user_id: int = None,
     **kwargs,
 ):
     """Общая обработка вопроса (из текста или suggestion-клика)."""
-    user_id = message.from_user.id
+    user_id = override_user_id or message.from_user.id
     normalized = normalize_text(original_text)
 
     logger.info(f"Query from {user_id}: '{original_text[:80]}'")
@@ -272,16 +276,27 @@ async def _process_question(
     # Формируем ответ
     response_text = answer
 
-    if sources_str and not is_off_topic:
-        source_label = get_msg("source_label", lang)
-        response_text += f"\n\n{source_label}: {sources_str}"
+    if not is_off_topic:
+        # Собираем названия источников (без точных URL)
+        site_sources = set()
+        if source_urls:
+            for url in source_urls:
+                if "islam.kz" in url:
+                    site_sources.add("islam.kz")
+                elif "muftyat.kz" in url:
+                    site_sources.add("muftyat.kz")
 
-    if source_urls and not is_off_topic:
-        for url in source_urls:
-            if "islam.kz" in url:
-                response_text += f"\n🔗 islam.kz: {url}"
-            elif "muftyat.kz" in url:
-                response_text += f"\n🔗 muftyat.kz: {url}"
+        # Объединяем книжные источники + сайты
+        all_sources = []
+        if sources_list:
+            all_sources.extend(sources_list)
+        for site in sorted(site_sources):
+            if site not in sources_str:
+                all_sources.append(site)
+
+        if all_sources:
+            source_label = get_msg("source_label", lang)
+            response_text += f"\n\n{source_label}: {', '.join(all_sources)}"
 
     if is_uncertain:
         if lang == "ru":
