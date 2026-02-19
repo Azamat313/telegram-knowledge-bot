@@ -79,9 +79,7 @@ MESSAGES = {
             "📊 Сіздің статистикаңыз:\n\n"
             "Пайдаланылған жауаптар: {answers_count}\n"
             "Тегін лимит: {free_limit}\n"
-            "Жазылым: {subscription_status}\n"
-            "База: {kb_count} жазба\n"
-            "Кэш: {cache_count} жауап"
+            "Жазылым: {subscription_status}"
         ),
         "subscription_status_active": "Белсенді ({expires} дейін)",
         "subscription_status_inactive": "Жоқ",
@@ -220,9 +218,7 @@ MESSAGES = {
             "📊 Ваша статистика:\n\n"
             "Использовано ответов: {answers_count}\n"
             "Бесплатный лимит: {free_limit}\n"
-            "Подписка: {subscription_status}\n"
-            "База: {kb_count} записей\n"
-            "Кэш: {cache_count} ответов"
+            "Подписка: {subscription_status}"
         ),
         "subscription_status_active": "Активна (до {expires})",
         "subscription_status_inactive": "Нет",

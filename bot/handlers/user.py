@@ -102,9 +102,7 @@ async def cmd_stats(message: Message, db: Database, search_engine: SearchEngine,
     text = get_msg("stats", lang,
                    answers_count=user['answers_count'],
                    free_limit=FREE_ANSWERS_LIMIT,
-                   subscription_status=sub_status,
-                   kb_count=search_engine.get_collection_count(),
-                   cache_count=search_engine.get_cache_count())
+                   subscription_status=sub_status)
     await message.answer(text)
 
 
