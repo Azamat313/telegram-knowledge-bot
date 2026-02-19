@@ -77,14 +77,14 @@ def _format_full_calendar(
             lines.append("")
 
     # === Таблица ===
-    lines.append("▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬")
+    lines.append("▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬")
 
     if lang == "ru":
-        lines.append("<code> №  Дата   Дн  Сухур  Ифтар</code>")
+        lines.append("<code> №  Дата  Дн │ Сухур  Ифтар</code>")
     else:
-        lines.append("<code> №  Күні   Кн  Сәрес  Ауыз.</code>")
+        lines.append("<code> №  Күні  Кн │ Сәрес  Ауыз.</code>")
 
-    lines.append("▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬")
+    lines.append("▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬")
 
     for i, day_info in enumerate(schedule):
         day_num = i + 1
@@ -98,18 +98,17 @@ def _format_full_calendar(
         except (ValueError, KeyError):
             dow = "  "
 
-        # Маркер текущего дня
-        if today_day and day_num == today_day:
-            marker = " ◀"
-        else:
-            marker = ""
+        is_today = today_day and day_num == today_day
+        line = f"{day_num:>2}  {date_str} {dow} │ {fajr}  {maghrib}"
 
-        line = f"{day_num:>2}  {date_str}  {dow}  {fajr}  {maghrib}{marker}"
-        lines.append(f"<code>{line}</code>")
+        if is_today:
+            lines.append(f"🟢<code>{line}</code>")
+        else:
+            lines.append(f"<code>{line}</code>")
 
         # Визуальный разделитель каждые 10 дней
         if day_num % 10 == 0 and day_num < len(schedule):
-            lines.append("<code>  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─</code>")
+            lines.append("<code>  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─</code>")
 
     lines.append("▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬")
 
@@ -235,14 +234,14 @@ def _format_prayer_times_table(
         lines.append("")
 
     # Таблица
-    lines.append("▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬")
+    lines.append("▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬")
 
     if lang == "ru":
-        lines.append("<code> №  Дата  Фадж Зухр  Аср  Маг  Иша</code>")
+        lines.append("<code> №  Дата  │ Фадж Зухр  Аср Маг  Иша</code>")
     else:
-        lines.append("<code> №  Күні  Таңғ Бесн Екнт Ақшм Құпт</code>")
+        lines.append("<code> №  Күні  │ Таңғ Бесн Екнт Ақшм Құпт</code>")
 
-    lines.append("▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬")
+    lines.append("▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬")
 
     for i, day_info in enumerate(schedule):
         day_num = i + 1
@@ -253,13 +252,16 @@ def _format_prayer_times_table(
         maghrib = day_info.get("maghrib", "--:--")
         isha = day_info.get("isha", "--:--")
 
-        marker = " ◀" if today_day and day_num == today_day else ""
+        is_today = today_day and day_num == today_day
+        line = f"{day_num:>2}  {date_str} │ {fajr} {dhuhr} {asr} {maghrib} {isha}"
 
-        line = f"{day_num:>2}  {date_str} {fajr} {dhuhr} {asr} {maghrib} {isha}{marker}"
-        lines.append(f"<code>{line}</code>")
+        if is_today:
+            lines.append(f"🟢<code>{line}</code>")
+        else:
+            lines.append(f"<code>{line}</code>")
 
         if day_num % 10 == 0 and day_num < len(schedule):
-            lines.append("<code>  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─</code>")
+            lines.append("<code>  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─</code>")
 
     lines.append("▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬")
 
