@@ -1,6 +1,7 @@
 """
 Middleware для rate limiting — защита от спама.
 Максимум RATE_LIMIT_PER_MINUTE запросов в минуту на пользователя.
+Нажатия кнопок главной клавиатуры НЕ учитываются в лимите.
 """
 
 import time
@@ -10,7 +11,20 @@ from typing import Any, Awaitable, Callable, Dict
 from aiogram import BaseMiddleware
 from aiogram.types import Message
 
-from config import RATE_LIMIT_PER_MINUTE, MSG_RATE_LIMIT
+from config import RATE_LIMIT_PER_MINUTE
+from core.messages import get_msg
+
+# Тексты кнопок главной клавиатуры (обоих языков) — не считаются в rate limit
+_BUTTON_TEXTS = {
+    "📅 Күнтізбе", "📅 Календарь",
+    "🕌 Намаз уақыты", "🕌 Время намаза",
+    "🕌 Ұстазға сұрақ", "🕌 Вопрос устазу",
+    "📊 Статистика",
+    "📝 Әкімшілікке жазу", "📝 Написать администрации",
+    "❓ Анықтама", "❓ Справка",
+    "📜 Шарттар", "📜 Условия",
+    "🌐 KZ/RU",
+}
 
 
 class RateLimitMiddleware(BaseMiddleware):
@@ -26,6 +40,10 @@ class RateLimitMiddleware(BaseMiddleware):
         data: Dict[str, Any],
     ) -> Any:
         if not isinstance(event, Message) or not event.from_user:
+            return await handler(event, data)
+
+        # Команды и кнопки клавиатуры — пропускаем без rate limit
+        if event.text and (event.text.startswith("/") or event.text in _BUTTON_TEXTS):
             return await handler(event, data)
 
         user_id = event.from_user.id
@@ -46,7 +64,14 @@ class RateLimitMiddleware(BaseMiddleware):
         ]
 
         if len(self._requests[user_id]) >= self.limit:
-            await event.answer(MSG_RATE_LIMIT)
+            # Определяем язык пользователя
+            db = data.get("db")
+            lang = "kk"
+            if db:
+                user = await db.get_user(user_id)
+                if user:
+                    lang = user.get("language", "kk")
+            await event.answer(get_msg("rate_limit", lang))
             return None
 
         self._requests[user_id].append(now)
