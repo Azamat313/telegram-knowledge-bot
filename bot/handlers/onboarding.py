@@ -1,5 +1,5 @@
 """
-Обработчики онбординга: /start → язык → поиск города → выбор из списка → главная.
+Обработчики онбординга: /start → язык → город (кнопки) → главная.
 """
 
 from aiogram import Router, F
@@ -14,22 +14,18 @@ from loguru import logger
 from database.db import Database
 from core.messages import get_msg, LANGUAGE_NAMES
 from core.muftyat_api import MuftyatAPI
+from core.cities import CITIES, CITY_COORDINATES
 from bot.states.onboarding import OnboardingStates
 from bot.handlers.user import get_main_keyboard
 
 router = Router()
 
-
-def _build_search_results_keyboard(cities: list[dict]) -> InlineKeyboardMarkup:
-    """Inline-кнопки с результатами поиска городов (до 8 штук)."""
-    rows = []
-    for i, city in enumerate(cities[:8]):
-        name = city.get("name", "")
-        rows.append([InlineKeyboardButton(
-            text=name,
-            callback_data=f"scity:{i}",
-        )])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+# Популярные города для кнопок (по 2 в ряд, 12 штук + "Другой город")
+POPULAR_CITIES = [
+    "Алматы", "Астана", "Шымкент", "Ақтөбе",
+    "Қарағанды", "Тараз", "Өскемен", "Павлодар",
+    "Атырау", "Ақтау", "Қостанай", "Семей",
+]
 
 
 def _build_language_keyboard() -> InlineKeyboardMarkup:
@@ -41,6 +37,41 @@ def _build_language_keyboard() -> InlineKeyboardMarkup:
         ]
     ])
 
+
+def _build_popular_cities_keyboard(lang: str = "kk") -> InlineKeyboardMarkup:
+    """Клавиатура с популярными городами (по 2 в ряд) + кнопка 'Другой город'."""
+    rows = []
+    for i in range(0, len(POPULAR_CITIES), 2):
+        row = []
+        for city_key in POPULAR_CITIES[i:i + 2]:
+            city_data = CITIES.get(city_key, {})
+            name = city_data.get(lang, city_key)
+            row.append(InlineKeyboardButton(
+                text=name,
+                callback_data=f"pcity:{city_key}",
+            ))
+        rows.append(row)
+    # Кнопка "Другой город"
+    rows.append([InlineKeyboardButton(
+        text=get_msg("onboarding_other_city", lang),
+        callback_data="other_city",
+    )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _build_search_results_keyboard(cities: list[dict], lang: str = "kk") -> InlineKeyboardMarkup:
+    """Inline-кнопки с результатами поиска городов (до 8 штук) + назад."""
+    rows = []
+    for i, city in enumerate(cities[:8]):
+        name = city.get("name", "")
+        rows.append([InlineKeyboardButton(
+            text=name,
+            callback_data=f"scity:{i}",
+        )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+# ──────────── /start ────────────
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, db: Database, state: FSMContext, **kwargs):
@@ -68,28 +99,71 @@ async def cmd_start(message: Message, db: Database, state: FSMContext, **kwargs)
         )
 
 
-# ──────────── Выбор языка ────────────
+# ──────────── Выбор языка → показ городов ────────────
 
 @router.callback_query(OnboardingStates.selecting_language, F.data.startswith("lang:"))
 async def on_language_selected(callback: CallbackQuery, db: Database, state: FSMContext, **kwargs):
-    """Пользователь выбрал язык — сохраняем и спрашиваем город."""
+    """Пользователь выбрал язык — показываем кнопки городов."""
     lang = callback.data.split(":")[1]
     user_id = callback.from_user.id
 
     await db.update_user_language(user_id, lang)
     await state.update_data(lang=lang)
-    await state.set_state(OnboardingStates.searching_city)
+    await state.set_state(OnboardingStates.selecting_from_search)
 
     lang_name = LANGUAGE_NAMES.get(lang, lang)
 
     await callback.message.edit_text(
         f"✅ {lang_name}\n\n"
-        f"{get_msg('onboarding_search_prompt', lang)}"
+        f"{get_msg('onboarding_select_city', lang)}",
+        reply_markup=_build_popular_cities_keyboard(lang),
     )
     await callback.answer()
 
 
-# ──────────── Поиск города ────────────
+# ──────────── Выбор популярного города → финализация ────────────
+
+@router.callback_query(
+    OnboardingStates.selecting_from_search,
+    F.data.startswith("pcity:"),
+)
+async def on_popular_city_selected(
+    callback: CallbackQuery, db: Database, state: FSMContext, **kwargs
+):
+    """Пользователь выбрал популярный город — завершаем онбординг."""
+    city_key = callback.data.split(":", 1)[1]
+    data = await state.get_data()
+    lang = data.get("lang", "kk")
+
+    coords = CITY_COORDINATES.get(city_key)
+    if not coords:
+        await callback.answer("Ошибка, попробуйте ещё раз")
+        return
+
+    city_data = CITIES.get(city_key, {})
+    city_name = city_data.get(lang, city_key)
+    city_lat, city_lng = coords
+
+    await _finalize_onboarding(callback, db, state, city_name, city_lat, city_lng, lang)
+
+
+# ──────────── "Другой город" → ввод текстом ────────────
+
+@router.callback_query(
+    OnboardingStates.selecting_from_search,
+    F.data == "other_city",
+)
+async def on_other_city(callback: CallbackQuery, state: FSMContext, **kwargs):
+    """Пользователь нажал 'Другой город' — переход к текстовому поиску."""
+    data = await state.get_data()
+    lang = data.get("lang", "kk")
+
+    await state.set_state(OnboardingStates.searching_city)
+    await callback.message.edit_text(get_msg("onboarding_search_prompt", lang))
+    await callback.answer()
+
+
+# ──────────── Текстовый поиск города ────────────
 
 @router.message(OnboardingStates.searching_city, F.text)
 async def on_city_search(
@@ -103,7 +177,7 @@ async def on_city_search(
 async def on_city_search_retry(
     message: Message, state: FSMContext, muftyat_api: MuftyatAPI, **kwargs
 ):
-    """Повторный поиск города."""
+    """Повторный поиск города (пользователь набрал текст вместо кнопки)."""
     await _do_city_search(message, state, muftyat_api, message.text)
 
 
@@ -120,7 +194,6 @@ async def _do_city_search(
         await state.set_state(OnboardingStates.searching_city)
         return
 
-    # Сохраняем результаты в FSM и показываем inline-кнопки
     search_results = [
         {"name": c["name"], "lat": float(c["lat"]), "lng": float(c["lng"])}
         for c in cities[:8]
@@ -129,11 +202,11 @@ async def _do_city_search(
     await state.set_state(OnboardingStates.selecting_from_search)
     await message.answer(
         get_msg("onboarding_search_results", lang),
-        reply_markup=_build_search_results_keyboard(cities),
+        reply_markup=_build_search_results_keyboard(cities, lang),
     )
 
 
-# ──────────── Выбор города из списка → финализация ────────────
+# ──────────── Выбор города из результатов поиска → финализация ────────────
 
 @router.callback_query(
     OnboardingStates.selecting_from_search,
@@ -142,7 +215,7 @@ async def _do_city_search(
 async def on_search_city_selected(
     callback: CallbackQuery, db: Database, state: FSMContext, **kwargs
 ):
-    """Пользователь выбрал город — завершаем онбординг."""
+    """Пользователь выбрал город из результатов поиска."""
     idx = int(callback.data.split(":")[1])
     data = await state.get_data()
     search_results = data.get("search_results", [])
@@ -153,27 +226,33 @@ async def on_search_city_selected(
         return
 
     city = search_results[idx]
-    city_name = city["name"]
-    city_lat = city["lat"]
-    city_lng = city["lng"]
+    await _finalize_onboarding(callback, db, state, city["name"], city["lat"], city["lng"], lang)
 
-    await db.update_user_city_full(callback.from_user.id, city_name, city_lat, city_lng)
-    await db.set_user_onboarded(callback.from_user.id)
+
+# ──────────── Финализация онбординга ────────────
+
+async def _finalize_onboarding(
+    callback: CallbackQuery, db: Database, state: FSMContext,
+    city_name: str, city_lat: float, city_lng: float, lang: str,
+):
+    """Сохраняем город, завершаем онбординг, показываем главное меню."""
+    user_id = callback.from_user.id
+
+    await db.update_user_city_full(user_id, city_name, city_lat, city_lng)
+    await db.set_user_onboarded(user_id)
 
     lang_name = LANGUAGE_NAMES.get(lang, lang)
-
     await state.clear()
 
     await callback.message.edit_text(
         get_msg("onboarding_complete", lang, city=city_name, language=lang_name),
     )
-
     await callback.message.answer(
         get_msg("welcome", lang),
         reply_markup=get_main_keyboard(lang),
     )
     await callback.answer()
-    logger.info(f"User {callback.from_user.id} onboarded: city={city_name}, lang={lang}")
+    logger.info(f"User {user_id} onboarded: city={city_name}, lang={lang}")
 
 
 # ──────────── Noop callback ────────────
