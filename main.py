@@ -13,7 +13,7 @@ from aiogram.types import BotCommand
 from aiogram.fsm.storage.memory import MemoryStorage
 from loguru import logger
 
-from config import BOT_TOKEN, LOG_PATH, OPENAI_API_KEY, MODERATOR_BOT_TOKEN
+from config import BOT_TOKEN, LOG_PATH, OPENAI_API_KEY, MODERATOR_BOT_TOKEN, USTAZ_BOT_TOKEN
 from database.db import Database
 from core.search_engine import SearchEngine
 from core.ai_engine import AIEngine
@@ -94,6 +94,15 @@ async def main():
         )
         logger.info("Moderator bot connected for notifications")
 
+    # Ustaz bot instance для нотификаций устазам
+    ustaz_bot_notifier = None
+    if USTAZ_BOT_TOKEN:
+        ustaz_bot_notifier = Bot(
+            token=USTAZ_BOT_TOKEN,
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        )
+        logger.info("Ustaz bot connected for notifications")
+
     # Регистрация middleware
     dp.message.middleware(RateLimitMiddleware())
     dp.message.middleware(SubscriptionCheckMiddleware(db))
@@ -114,6 +123,7 @@ async def main():
         "cache_engine": search_engine,
         "ai_engine": ai_engine,
         "moderator_bot": moderator_bot,
+        "ustaz_bot": ustaz_bot_notifier,
         "muftyat_api": muftyat_api,
     })
 
@@ -137,6 +147,8 @@ async def main():
         await bot.session.close()
         if moderator_bot:
             await moderator_bot.session.close()
+        if ustaz_bot_notifier:
+            await ustaz_bot_notifier.session.close()
         logger.info("Bot stopped")
 
 

@@ -1,5 +1,5 @@
 """
-Обработчики онбординга: /start → поиск города → выбор из списка → язык → главная.
+Обработчики онбординга: /start → язык → поиск города → выбор из списка → главная.
 """
 
 from aiogram import Router, F
@@ -52,14 +52,12 @@ async def cmd_start(message: Message, db: Database, state: FSMContext, **kwargs)
     )
 
     if not user.get("is_onboarded"):
-        await state.set_state(OnboardingStates.searching_city)
+        await state.set_state(OnboardingStates.selecting_language)
         await message.answer(
-            get_msg("onboarding_welcome", "kk"),
-            reply_markup=ReplyKeyboardRemove(),
-        )
-        await message.answer(
-            "🏙 Қалаңыздың атауын жазыңыз:\n"
-            "🏙 Введите название вашего города:"
+            "Ассалаумағалейкум! 🌙\n"
+            "Ассаляму алейкум! 🌙\n\n"
+            "🌐 Тілді таңдаңыз / Выберите язык:",
+            reply_markup=_build_language_keyboard(),
         )
     else:
         lang = user.get("language", "kk")
@@ -68,6 +66,27 @@ async def cmd_start(message: Message, db: Database, state: FSMContext, **kwargs)
             get_msg("welcome_back", lang, first_name=first_name),
             reply_markup=get_main_keyboard(lang),
         )
+
+
+# ──────────── Выбор языка ────────────
+
+@router.callback_query(OnboardingStates.selecting_language, F.data.startswith("lang:"))
+async def on_language_selected(callback: CallbackQuery, db: Database, state: FSMContext, **kwargs):
+    """Пользователь выбрал язык — сохраняем и спрашиваем город."""
+    lang = callback.data.split(":")[1]
+    user_id = callback.from_user.id
+
+    await db.update_user_language(user_id, lang)
+    await state.update_data(lang=lang)
+    await state.set_state(OnboardingStates.searching_city)
+
+    lang_name = LANGUAGE_NAMES.get(lang, lang)
+
+    await callback.message.edit_text(
+        f"✅ {lang_name}\n\n"
+        f"{get_msg('onboarding_search_prompt', lang)}"
+    )
+    await callback.answer()
 
 
 # ──────────── Поиск города ────────────
@@ -92,12 +111,12 @@ async def _do_city_search(
     message: Message, state: FSMContext, api: MuftyatAPI, query: str
 ):
     """Поиск города через API muftyat.kz."""
+    data = await state.get_data()
+    lang = data.get("lang", "kk")
+
     cities = await api.search_cities(query.strip())
     if not cities:
-        await message.answer(
-            "Ештеңе табылмады. Қайта жазып көріңіз:\n"
-            "Ничего не найдено. Попробуйте ещё раз:"
-        )
+        await message.answer(get_msg("onboarding_search_no_results", lang))
         await state.set_state(OnboardingStates.searching_city)
         return
 
@@ -109,12 +128,12 @@ async def _do_city_search(
     await state.update_data(search_results=search_results)
     await state.set_state(OnboardingStates.selecting_from_search)
     await message.answer(
-        "🏙 Қалаңызды таңдаңыз / Выберите ваш город:",
+        get_msg("onboarding_search_results", lang),
         reply_markup=_build_search_results_keyboard(cities),
     )
 
 
-# ──────────── Выбор города из списка ────────────
+# ──────────── Выбор города из списка → финализация ────────────
 
 @router.callback_query(
     OnboardingStates.selecting_from_search,
@@ -123,10 +142,11 @@ async def _do_city_search(
 async def on_search_city_selected(
     callback: CallbackQuery, db: Database, state: FSMContext, **kwargs
 ):
-    """Пользователь выбрал город из результатов поиска."""
+    """Пользователь выбрал город — завершаем онбординг."""
     idx = int(callback.data.split(":")[1])
     data = await state.get_data()
     search_results = data.get("search_results", [])
+    lang = data.get("lang", "kk")
 
     if idx >= len(search_results):
         await callback.answer("Ошибка, попробуйте ещё раз")
@@ -138,29 +158,8 @@ async def on_search_city_selected(
     city_lng = city["lng"]
 
     await db.update_user_city_full(callback.from_user.id, city_name, city_lat, city_lng)
-    await state.update_data(city_name=city_name, city_lat=city_lat, city_lng=city_lng)
-    await state.set_state(OnboardingStates.selecting_language)
+    await db.set_user_onboarded(callback.from_user.id)
 
-    await callback.message.edit_text(
-        f"✅ {city_name}\n\n🌐 Тілді таңдаңыз / Выберите язык:",
-        reply_markup=_build_language_keyboard(),
-    )
-    await callback.answer()
-
-
-# ──────────── Выбор языка ────────────
-
-@router.callback_query(OnboardingStates.selecting_language, F.data.startswith("lang:"))
-async def on_language_selected(callback: CallbackQuery, db: Database, state: FSMContext, **kwargs):
-    """Пользователь выбрал язык — завершаем онбординг."""
-    lang = callback.data.split(":")[1]
-    user_id = callback.from_user.id
-
-    await db.update_user_language(user_id, lang)
-    await db.set_user_onboarded(user_id)
-
-    data = await state.get_data()
-    city_name = data.get("city_name", "")
     lang_name = LANGUAGE_NAMES.get(lang, lang)
 
     await state.clear()
@@ -174,7 +173,7 @@ async def on_language_selected(callback: CallbackQuery, db: Database, state: FSM
         reply_markup=get_main_keyboard(lang),
     )
     await callback.answer()
-    logger.info(f"User {user_id} onboarded: city={city_name}, lang={lang}")
+    logger.info(f"User {callback.from_user.id} onboarded: city={city_name}, lang={lang}")
 
 
 # ──────────── Noop callback ────────────

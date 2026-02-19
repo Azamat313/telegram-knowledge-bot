@@ -29,15 +29,19 @@ def get_main_keyboard(lang: str = "kk") -> ReplyKeyboardMarkup:
         keyboard=[
             [
                 KeyboardButton(text=get_msg("btn_calendar", lang)),
+                KeyboardButton(text=get_msg("btn_prayer_times", lang)),
+            ],
+            [
                 KeyboardButton(text=get_msg("btn_ask_ustaz", lang)),
-            ],
-            [
                 KeyboardButton(text=get_msg("btn_stats", lang)),
-                KeyboardButton(text=get_msg("btn_write_admin", lang)),
             ],
             [
+                KeyboardButton(text=get_msg("btn_write_admin", lang)),
                 KeyboardButton(text=get_msg("btn_help", lang)),
+            ],
+            [
                 KeyboardButton(text=get_msg("btn_terms", lang)),
+                KeyboardButton(text=get_msg("btn_lang_switch", lang)),
             ],
         ],
         resize_keyboard=True,
@@ -120,6 +124,19 @@ async def btn_help(message: Message, db: Database, **kwargs):
 @router.message(F.text.in_({"📜 Шарттар", "📜 Условия"}))
 async def btn_terms(message: Message, db: Database, **kwargs):
     await cmd_terms(message, db=db, **kwargs)
+
+
+# Кнопка смены языка KZ/RU
+@router.message(F.text == "🌐 KZ/RU")
+async def btn_switch_language(message: Message, db: Database, **kwargs):
+    user = await db.get_user(message.from_user.id)
+    current_lang = user.get("language", "kk") if user else "kk"
+    new_lang = "ru" if current_lang == "kk" else "kk"
+    await db.update_user_language(message.from_user.id, new_lang)
+    await message.answer(
+        get_msg("lang_switched", new_lang),
+        reply_markup=get_main_keyboard(new_lang),
+    )
 
 
 @router.callback_query(F.data.startswith("suggest:"))

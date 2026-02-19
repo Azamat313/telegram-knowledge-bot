@@ -187,6 +187,130 @@ async def btn_calendar_ru(message: Message, db: Database, muftyat_api: MuftyatAP
     await _show_calendar(message, db, muftyat_api, message.from_user.id)
 
 
+# ──────────── Намаз уақыты / Время намаза (таблица 6 намазов) ────────────
+
+# Названия намазов
+PRAYER_NAMES_KK = ["Имсақ", "Таңғы", "Күн ш.", "Бесін", "Екінті", "Ақшам", "Құптан"]
+PRAYER_NAMES_RU = ["Имсак", "Фаджр", "Восход", "Зухр", "Аср", "Магриб", "Иша"]
+
+
+def _format_prayer_times_table(
+    schedule: list[dict],
+    city: str,
+    lang: str = "kk",
+) -> str:
+    """Сформировать таблицу всех намазов за 30 дней Рамадана."""
+    today_day = get_ramadan_day_number()
+    dow_names = DOW_KK if lang == "kk" else DOW_RU
+
+    if lang == "ru":
+        lines = ["🕌 <b>ВРЕМЯ НАМАЗА — РАМАДАН 2026</b>"]
+    else:
+        lines = ["🕌 <b>НАМАЗ УАҚЫТЫ — РАМАЗАН 2026</b>"]
+
+    lines.append(f"📍 {city}")
+    lines.append("")
+
+    # Сегодняшний день — подробная карточка
+    if today_day and 1 <= today_day <= len(schedule):
+        today_info = schedule[today_day - 1]
+        try:
+            dt = datetime.strptime(today_info["date"], "%Y-%m-%d")
+            dow = dow_names.get(dt.weekday(), "")
+        except (ValueError, KeyError):
+            dow = ""
+
+        day_date = today_info["date"][5:]
+        names = PRAYER_NAMES_RU if lang == "ru" else PRAYER_NAMES_KK
+
+        if lang == "ru":
+            lines.append(f"📌 <b>СЕГОДНЯ: {today_day}-й день</b> ({day_date}, {dow})")
+        else:
+            lines.append(f"📌 <b>БҮГІН: {today_day}-күн</b> ({day_date}, {dow})")
+
+        lines.append(f"    {names[0]}: <b>{today_info.get('imsak', '-')}</b>  |  {names[1]}: <b>{today_info.get('fajr', '-')}</b>")
+        lines.append(f"    {names[2]}: <b>{today_info.get('sunrise', '-')}</b>  |  {names[3]}: <b>{today_info.get('dhuhr', '-')}</b>")
+        lines.append(f"    {names[4]}: <b>{today_info.get('asr', '-')}</b>  |  {names[5]}: <b>{today_info.get('maghrib', '-')}</b>")
+        lines.append(f"    {names[6]}: <b>{today_info.get('isha', '-')}</b>")
+        lines.append("")
+
+    # Таблица
+    lines.append("▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬")
+
+    if lang == "ru":
+        lines.append("<code> №  Дата  Фадж Зухр  Аср  Маг  Иша</code>")
+    else:
+        lines.append("<code> №  Күні  Таңғ Бесн Екнт Ақшм Құпт</code>")
+
+    lines.append("▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬")
+
+    for i, day_info in enumerate(schedule):
+        day_num = i + 1
+        date_str = day_info["date"][5:]  # MM-DD
+        fajr = day_info.get("fajr", "--:--")
+        dhuhr = day_info.get("dhuhr", "--:--")
+        asr = day_info.get("asr", "--:--")
+        maghrib = day_info.get("maghrib", "--:--")
+        isha = day_info.get("isha", "--:--")
+
+        marker = " ◀" if today_day and day_num == today_day else ""
+
+        line = f"{day_num:>2}  {date_str} {fajr} {dhuhr} {asr} {maghrib} {isha}{marker}"
+        lines.append(f"<code>{line}</code>")
+
+        if day_num % 10 == 0 and day_num < len(schedule):
+            lines.append("<code>  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─</code>")
+
+    lines.append("▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬")
+
+    if lang == "ru":
+        lines.append("Фадж=Фаджр  Маг=Магриб  Иша=Ночной")
+    else:
+        lines.append("Таңғ=Таңғы  Бесн=Бесін  Ақшм=Ақшам  Құпт=Құптан")
+
+    return "\n".join(lines)
+
+
+async def _show_prayer_times(target, db: Database, muftyat_api: MuftyatAPI, user_id: int):
+    """Показать таблицу времён намаза."""
+    user = await db.get_user(user_id)
+    lang = user.get("language", "kk") if user else "kk"
+    city = user.get("city") if user else None
+    lat = user.get("city_lat") if user else None
+    lng = user.get("city_lng") if user else None
+
+    if not city or lat is None or lng is None:
+        if lang == "ru":
+            text = "📍 Сначала выберите город: /start"
+        else:
+            text = "📍 Алдымен қалаңызды таңдаңыз: /start"
+        await target.answer(text)
+        return
+
+    schedule = await _get_ramadan_schedule(db, muftyat_api, city, lat, lng)
+    if not schedule:
+        if lang == "ru":
+            text = "Рамадан ещё не начался или уже закончился."
+        else:
+            text = "Рамазан әлі басталмаған немесе аяқталған."
+        await target.answer(text)
+        return
+
+    text = _format_prayer_times_table(schedule, city, lang)
+    await target.answer(text)
+
+
+# Кнопки "Намаз уақыты" / "Время намаза"
+@router.message(F.text == "🕌 Намаз уақыты")
+async def btn_prayer_times_kk(message: Message, db: Database, muftyat_api: MuftyatAPI, **kwargs):
+    await _show_prayer_times(message, db, muftyat_api, message.from_user.id)
+
+
+@router.message(F.text == "🕌 Время намаза")
+async def btn_prayer_times_ru(message: Message, db: Database, muftyat_api: MuftyatAPI, **kwargs):
+    await _show_prayer_times(message, db, muftyat_api, message.from_user.id)
+
+
 # Inline-кнопка календаря под ответом ИИ
 @router.callback_query(F.data == "show_calendar")
 async def on_show_calendar(callback: CallbackQuery, db: Database, muftyat_api: MuftyatAPI, **kwargs):
