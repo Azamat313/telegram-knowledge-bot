@@ -209,6 +209,25 @@ class Database:
             await self._conn.commit()
             logger.info(f"Migrated {migrated} users with city coordinates")
 
+    # ──────────────── Users grouped by coordinates ──────────────
+
+    async def get_users_grouped_by_coordinates(self) -> list[dict]:
+        """DISTINCT (city_lat, city_lng, city) для onboarded юзеров."""
+        cursor = await self._conn.execute(
+            "SELECT DISTINCT city_lat, city_lng, city FROM users "
+            "WHERE is_onboarded = TRUE AND city_lat IS NOT NULL AND city_lng IS NOT NULL"
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
+    async def get_users_by_coordinates(self, lat: float, lng: float) -> list[dict]:
+        """Все onboarded юзеры с данными координатами."""
+        cursor = await self._conn.execute(
+            "SELECT telegram_id, language, first_name FROM users "
+            "WHERE is_onboarded = TRUE AND city_lat = ? AND city_lng = ?",
+            (lat, lng),
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
     # ──────────────────── Prayer Times Cache ────────────────────
 
     async def cache_prayer_times(

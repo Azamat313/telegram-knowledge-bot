@@ -4,15 +4,20 @@ SPA с тёмной темой — управление пользователя
 консультациями, тикетами, устазами, статистикой.
 """
 
+import asyncio
 import base64
 import json
 import os
 import sys
 
 from aiohttp import web
+from aiogram import Bot
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 from loguru import logger
 
 from config import (
+    BOT_TOKEN,
     WEB_ADMIN_USER,
     WEB_ADMIN_PASSWORD,
     FREE_ANSWERS_LIMIT,
@@ -434,6 +439,41 @@ async def handle_logs_top_questions(request):
     return _json({"items": items})
 
 
+# ─── Broadcast ───
+
+async def handle_broadcast(request):
+    db: Database = request.app["db"]
+    bot: Bot = request.app["bot"]
+    body = await request.json()
+    message = body.get("message", "").strip()
+    if not message:
+        return _json({"error": "Message cannot be empty"}, 400)
+
+    cursor = await db._conn.execute(
+        "SELECT telegram_id FROM users WHERE is_onboarded = TRUE"
+    )
+    rows = await cursor.fetchall()
+    user_ids = [row["telegram_id"] for row in rows]
+
+    total = len(user_ids)
+    sent = 0
+    failed = 0
+    errors = []
+
+    for i, tid in enumerate(user_ids):
+        try:
+            await bot.send_message(tid, message, parse_mode=ParseMode.HTML)
+            sent += 1
+        except Exception as e:
+            failed += 1
+            errors.append({"telegram_id": tid, "error": str(e)})
+        if (i + 1) % 25 == 0:
+            await asyncio.sleep(1)
+
+    logger.info(f"Broadcast: total={total}, sent={sent}, failed={failed}")
+    return _json({"total": total, "sent": sent, "failed": failed, "errors": errors})
+
+
 # ─── Settings ───
 
 async def handle_settings(request):
@@ -654,6 +694,10 @@ textarea{resize:vertical;min-height:80px;width:100%;font-family:inherit}
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22,12 18,12 15,21 9,3 6,12 2,12"/></svg>
       <span>Logs</span>
     </div>
+    <div class="nav-item" onclick="navigate('broadcast')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l18-5v12L3 13v-2z"/><path d="M11.6 16.8a3 3 0 11-5.8-1.6"/></svg>
+      <span>Broadcast</span>
+    </div>
     <div class="nav-item" onclick="navigate('settings')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
       <span>Settings</span>
@@ -726,7 +770,7 @@ function paginationHTML(total, page, perPage, onClickFn) {
 function navigate(page) {
   currentPage = page;
   document.querySelectorAll('.nav-item').forEach((el, i) => {
-    const pages = ['dashboard','users','consultations','ustazs','tickets','kaspi','logs','settings'];
+    const pages = ['dashboard','users','consultations','ustazs','tickets','kaspi','logs','broadcast','settings'];
     el.classList.toggle('active', pages[i] === page);
   });
   renderPage();
@@ -743,6 +787,7 @@ function renderPage() {
     case 'tickets': renderTickets(1); break;
     case 'kaspi': renderKaspi(1); break;
     case 'logs': renderLogs(1); break;
+    case 'broadcast': renderBroadcast(); break;
     case 'settings': renderSettings(); break;
   }
 }
@@ -1282,6 +1327,71 @@ async function rejectKaspi(id) {
   } catch(e) { toast(e.message,'error'); }
 }
 
+// ─── Broadcast ───
+function renderBroadcast() {
+  document.getElementById('main').innerHTML = `
+    <div class="section">
+      <h2>Broadcast Message</h2>
+      <p style="color:#8899a6;font-size:13px;margin-bottom:16px">
+        Send a message to all onboarded users. Supports HTML formatting.
+      </p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div>
+          <div class="form-group">
+            <label>Message (HTML)</label>
+            <textarea id="broadcastMsg" rows="12" placeholder="Enter message with HTML formatting..."
+              oninput="updateBroadcastPreview()"></textarea>
+          </div>
+          <button class="btn btn-primary" onclick="doBroadcast()" id="broadcastBtn">Send to All Users</button>
+        </div>
+        <div>
+          <div class="form-group"><label>Preview</label></div>
+          <div id="broadcastPreview" style="background:#0a0f18;border:1px solid #1e2d3d;
+            border-radius:8px;padding:16px;min-height:200px;font-size:14px;line-height:1.6;
+            color:#e4e6eb;overflow-wrap:break-word"></div>
+        </div>
+      </div>
+      <div id="broadcastResult" style="margin-top:20px"></div>
+    </div>`;
+}
+
+function updateBroadcastPreview() {
+  const msg = document.getElementById('broadcastMsg').value;
+  document.getElementById('broadcastPreview').innerHTML = msg || '<span style="color:#8899a6">Preview will appear here...</span>';
+}
+
+async function doBroadcast() {
+  const msg = document.getElementById('broadcastMsg').value.trim();
+  if (!msg) { toast('Message cannot be empty','error'); return; }
+  if (!confirm('Send this message to ALL users?')) return;
+
+  const btn = document.getElementById('broadcastBtn');
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
+
+  try {
+    const r = await apiPost('/api/admin/broadcast', {message: msg});
+    let h = `<div class="stat-cards">
+      <div class="stat-card"><div class="label">Total</div><div class="value">${r.total}</div></div>
+      <div class="stat-card"><div class="label">Sent</div><div class="value green">${r.sent}</div></div>
+      <div class="stat-card"><div class="label">Failed</div><div class="value orange">${r.failed}</div></div>
+    </div>`;
+    if (r.errors && r.errors.length) {
+      h += '<div class="section" style="margin-top:12px"><h3>Errors</h3><table><tr><th>Telegram ID</th><th>Error</th></tr>';
+      for (const e of r.errors) {
+        h += '<tr><td>' + e.telegram_id + '</td><td>' + esc(e.error) + '</td></tr>';
+      }
+      h += '</table></div>';
+    }
+    document.getElementById('broadcastResult').innerHTML = h;
+    toast('Broadcast complete: ' + r.sent + ' sent, ' + r.failed + ' failed', 'success');
+  } catch(e) { toast(e.message,'error'); }
+  finally {
+    btn.disabled = false;
+    btn.textContent = 'Send to All Users';
+  }
+}
+
 // ─── Settings ───
 async function renderSettings() {
   try {
@@ -1374,6 +1484,18 @@ async def init_app():
     await db.connect()
     app["db"] = db
 
+    # Bot instance for broadcast
+    bot = Bot(
+        token=BOT_TOKEN,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    app["bot"] = bot
+
+    async def cleanup_bot(app):
+        await app["bot"].session.close()
+
+    app.on_cleanup.append(cleanup_bot)
+
     # SPA
     app.router.add_get("/", handle_index)
 
@@ -1410,6 +1532,9 @@ async def init_app():
     app.router.add_get("/api/admin/logs", handle_logs_list)
     app.router.add_get("/api/admin/logs/top-unanswered", handle_logs_top_unanswered)
     app.router.add_get("/api/admin/logs/top-questions", handle_logs_top_questions)
+
+    # Broadcast
+    app.router.add_post("/api/admin/broadcast", handle_broadcast)
 
     # Settings
     app.router.add_get("/api/admin/settings", handle_settings)

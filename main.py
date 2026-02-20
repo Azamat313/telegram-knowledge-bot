@@ -5,6 +5,7 @@
 import asyncio
 import sys
 import os
+from datetime import datetime, timedelta
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -19,6 +20,8 @@ from core.search_engine import SearchEngine
 from core.ai_engine import AIEngine
 from core.knowledge_loader import load_all_knowledge
 from core.muftyat_api import MuftyatAPI
+from core.ramadan_calendar import is_ramadan, ensure_prayer_times, RAMADAN_START, RAMADAN_END
+from core.messages import get_msg
 from bot.handlers import user, admin, subscription
 from bot.handlers import consultation, calendar, moderator_request
 from bot.handlers import onboarding, kaspi_payment
@@ -39,6 +42,105 @@ def setup_logging():
         level="DEBUG",
         encoding="utf-8",
     )
+
+
+async def ramadan_reminder_task(bot: Bot, db: Database, muftyat_api: MuftyatAPI):
+    """Background task: отправка напоминаний за 10 мин до сәресі/ауызашар."""
+    sent_today: set[str] = set()
+    last_reset_date = datetime.now().date()
+
+    while True:
+        try:
+            await asyncio.sleep(60)
+
+            now = datetime.now()
+
+            # Reset tracking set at midnight
+            if now.date() != last_reset_date:
+                sent_today.clear()
+                last_reset_date = now.date()
+
+            if not is_ramadan():
+                continue
+
+            # Get distinct coordinate groups
+            groups = await db.get_users_grouped_by_coordinates()
+            if not groups:
+                continue
+
+            today_str = now.strftime("%Y-%m-%d")
+
+            for group in groups:
+                lat = group["city_lat"]
+                lng = group["city_lng"]
+                city = group["city"] or "?"
+
+                # Ensure prayer times are cached
+                await ensure_prayer_times(muftyat_api, db, city, lat, lng)
+
+                # Get today's prayer times
+                cached = await db.get_cached_prayer_times(lat, lng, today_str, today_str)
+                if not cached:
+                    continue
+
+                day_data = cached[0]
+                fajr_str = day_data.get("fajr", "")
+                maghrib_str = day_data.get("maghrib", "")
+
+                if not fajr_str or not maghrib_str:
+                    continue
+
+                # Parse times
+                try:
+                    fajr_time = datetime.strptime(f"{today_str} {fajr_str}", "%Y-%m-%d %H:%M")
+                    maghrib_time = datetime.strptime(f"{today_str} {maghrib_str}", "%Y-%m-%d %H:%M")
+                except ValueError:
+                    continue
+
+                # Check suhoor reminder window: fajr - 10 min to fajr - 9 min
+                suhoor_target = fajr_time - timedelta(minutes=10)
+                should_send_suhoor = suhoor_target <= now < suhoor_target + timedelta(minutes=1)
+
+                # Check iftar reminder window: maghrib - 10 min to maghrib - 9 min
+                iftar_target = maghrib_time - timedelta(minutes=10)
+                should_send_iftar = iftar_target <= now < iftar_target + timedelta(minutes=1)
+
+                if not should_send_suhoor and not should_send_iftar:
+                    continue
+
+                # Get users for this coordinate group
+                users = await db.get_users_by_coordinates(lat, lng)
+
+                for u in users:
+                    tid = u["telegram_id"]
+                    lang = u.get("language", "kk")
+
+                    if should_send_suhoor:
+                        key = f"{today_str}:{tid}:suhoor"
+                        if key not in sent_today:
+                            try:
+                                text = get_msg("suhoor_reminder", lang, city=city, fajr=fajr_str)
+                                await bot.send_message(tid, text, parse_mode=ParseMode.HTML)
+                                sent_today.add(key)
+                            except Exception as e:
+                                logger.debug(f"Suhoor reminder failed for {tid}: {e}")
+
+                    if should_send_iftar:
+                        key = f"{today_str}:{tid}:iftar"
+                        if key not in sent_today:
+                            try:
+                                text = get_msg("iftar_reminder", lang, city=city, maghrib=maghrib_str)
+                                await bot.send_message(tid, text, parse_mode=ParseMode.HTML)
+                                sent_today.add(key)
+                            except Exception as e:
+                                logger.debug(f"Iftar reminder failed for {tid}: {e}")
+
+        except asyncio.CancelledError:
+            logger.info("Ramadan reminder task cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Ramadan reminder task error: {e}")
+            await asyncio.sleep(60)
 
 
 async def main():
@@ -140,9 +242,20 @@ async def main():
 
     logger.info("Bot is starting polling...")
 
+    # Start Ramadan reminder background task
+    reminder_task = asyncio.create_task(
+        ramadan_reminder_task(bot, db, muftyat_api)
+    )
+    logger.info("Ramadan reminder task started")
+
     try:
         await dp.start_polling(bot)
     finally:
+        reminder_task.cancel()
+        try:
+            await reminder_task
+        except asyncio.CancelledError:
+            pass
         await muftyat_api.close()
         await db.close()
         await bot.session.close()
