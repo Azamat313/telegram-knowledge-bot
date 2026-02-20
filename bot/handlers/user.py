@@ -210,7 +210,7 @@ async def _process_question(
     user = await db.get_user(user_id)
     lang = user.get("language", "kk") if user else "kk"
 
-    thinking_msg = await message.answer("🔄 <i>Сұрағыңыз өңделуде, күте тұрыңыз...</i>")
+    thinking_msg = await message.answer(get_msg("thinking", lang))
 
     is_subscribed = kwargs.get("is_subscribed", False)
 
