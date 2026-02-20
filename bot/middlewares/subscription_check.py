@@ -29,6 +29,10 @@ class SubscriptionCheckMiddleware(BaseMiddleware):
         if not isinstance(event, Message) or not event.from_user:
             return await handler(event, data)
 
+        # Пропускаем платёжные сообщения (successful_payment, invoice)
+        if event.successful_payment:
+            return await handler(event, data)
+
         # Пропускаем команды (они обрабатываются отдельно)
         if event.text and event.text.startswith("/"):
             return await handler(event, data)
