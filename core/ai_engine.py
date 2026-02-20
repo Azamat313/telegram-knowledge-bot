@@ -193,7 +193,9 @@ class AIEngine:
             return None
 
         b64_image = base64.b64encode(image_bytes).decode("utf-8")
-        data_uri = f"data:image/jpeg;base64,{b64_image}"
+        # Detect image format: PNG starts with \x89PNG
+        mime = "image/png" if image_bytes[:4] == b'\x89PNG' else "image/jpeg"
+        data_uri = f"data:{mime};base64,{b64_image}"
 
         messages = [
             {
