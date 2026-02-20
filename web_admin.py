@@ -1361,7 +1361,7 @@ async function rejectKaspi(id) {
   } catch(e) { toast(e.message,'error'); }
 }
 
-function showReceipt(id, amount, status, createdAt) {
+async function showReceipt(id, amount, status, createdAt) {
   openModal(`
     <h3>Receipt — Payment #${id}</h3>
     <div style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap">
@@ -1369,22 +1369,22 @@ function showReceipt(id, amount, status, createdAt) {
       <div class="detail-row" style="flex:1;min-width:100px"><div class="detail-label">Status</div><div class="detail-value">${badgeFor(status)}</div></div>
       <div class="detail-row" style="flex:1;min-width:100px"><div class="detail-label">Created</div><div class="detail-value">${fmtDate(createdAt)}</div></div>
     </div>
-    <div style="text-align:center;padding:20px;color:#8899a6">Loading image...</div>
+    <div id="receipt-loader" style="text-align:center;padding:20px;color:#8899a6">Loading image...</div>
     <div class="modal-actions"><button class="btn btn-primary" onclick="closeModal()">Close</button></div>
   `, 'modal-lg');
-  const img = new Image();
-  img.onload = function() {
-    const mc = document.getElementById('modal-content');
-    const loader = mc.querySelector('div[style*="Loading"]');
-    if (loader) loader.replaceWith(img);
-  };
-  img.onerror = function() {
-    const mc = document.getElementById('modal-content');
-    const loader = mc.querySelector('div[style*="Loading"]');
-    if (loader) loader.innerHTML = '<span style="color:#f87171">Failed to load receipt image</span>';
-  };
-  img.style.cssText = 'max-width:100%;border-radius:8px;border:1px solid #1e2d3d';
-  img.src = `/api/admin/kaspi/${id}/receipt`;
+  try {
+    const r = await fetch(`/api/admin/kaspi/${id}/receipt`);
+    if (!r.ok) throw new Error('Not found');
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const img = document.createElement('img');
+    img.style.cssText = 'max-width:100%;border-radius:8px;border:1px solid #1e2d3d';
+    img.src = url;
+    document.getElementById('receipt-loader').replaceWith(img);
+  } catch(e) {
+    const el = document.getElementById('receipt-loader');
+    if (el) el.innerHTML = '<span style="color:#f87171">Failed to load receipt image</span>';
+  }
 }
 
 // ─── Broadcast ───
