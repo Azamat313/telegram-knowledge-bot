@@ -16,7 +16,7 @@ from config import (
 from core.messages import get_msg
 from core.normalizer import normalize_text
 from core.search_engine import SearchEngine
-from core.ai_engine import AIEngine
+from core.ai_engine import AIEngine, _is_kazakh_text
 from database.db import Database
 from bot.keyboards.inline import get_answer_keyboard
 
@@ -235,6 +235,13 @@ async def _process_question(
             await db.add_conversation_message(user_id, "assistant", answer)
 
             response_text = answer
+
+            if lang == "ru" and _is_kazakh_text(response_text):
+                translated = await ai_engine.translate(response_text)
+                if translated:
+                    response_text = translated
+                    response_text += "\n\n<i>Текст автоматически переведён с казахского</i>"
+
             if sources:
                 source_label = get_msg("source_label", lang)
                 response_text += f"\n\n{source_label}: {sources}"
@@ -290,6 +297,12 @@ async def _process_question(
 
     # Формируем ответ
     response_text = answer
+
+    if lang == "ru" and _is_kazakh_text(response_text):
+        translated = await ai_engine.translate(response_text)
+        if translated:
+            response_text = translated
+            response_text += "\n\n<i>Текст автоматически переведён с казахского</i>"
 
     if not is_off_topic:
         # Собираем названия источников (без точных URL)

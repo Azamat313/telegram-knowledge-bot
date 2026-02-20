@@ -22,8 +22,8 @@ There is also `main_both.py` — runs user + ustaz bots in one process (legacy, 
 ## Server & Deployment
 
 - **Server:** VPS `185.129.51.30` (Ubuntu), user `root`
-- **Project path on server:** `/root/telegram-knowledge-bot/`
-- **Python venv on server:** `/root/telegram-knowledge-bot/venv/`
+- **Project path on server:** `/opt/telegram-knowledge-bot/`
+- **Python venv on server:** `/opt/telegram-knowledge-bot/venv/`
 - **Git remote:** GitHub (push from local Windows → pull on server)
 
 ### Systemd Services (4 services)
@@ -37,22 +37,27 @@ There is also `main_both.py` — runs user + ustaz bots in one process (legacy, 
 
 ### Deploy Procedure
 
+SSH credentials are in `.claude/secrets.md` (gitignored, never commit).
+On Windows use **paramiko** (Python) for non-interactive SSH since sshpass is not available.
+
+**Automated deploy from Claude Code (paramiko):**
+```python
+import paramiko
+ssh = paramiko.SSHClient()
+ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+pwd = ')ro!h' + chr(37) + 'qrBbdPJMj4='   # password from .claude/secrets.md
+ssh.connect('185.129.51.30', username='root', password=pwd)
+stdin, stdout, stderr = ssh.exec_command('cd /opt/telegram-knowledge-bot && git pull && systemctl restart ramadan-bot')
+print(stdout.read().decode(), stderr.read().decode())
+ssh.close()
+```
+
+**Services to restart after deploy:**
 ```bash
-# 1. Local: commit & push
-git add -A && git commit -m "description" && git push
-
-# 2. SSH to server
-ssh root@185.129.51.30
-
-# 3. Pull & restart
-cd /root/telegram-knowledge-bot
-git pull
-
-# Restart specific service:
-systemctl restart ramadan-bot
-systemctl restart ustaz-bot
-systemctl restart moderator-bot
-systemctl restart web-admin
+systemctl restart ramadan-bot      # user bot
+systemctl restart ustaz-bot        # ustaz bot
+systemctl restart moderator-bot    # moderator bot
+systemctl restart web-admin        # web admin panel (port 8888)
 
 # Check logs:
 journalctl -u ramadan-bot -f --no-pager

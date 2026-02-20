@@ -7,3 +7,4 @@ __pycache__/
 *.pyc
 backups/
 =1.0.0
+.claude/

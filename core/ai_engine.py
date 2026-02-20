@@ -155,6 +155,13 @@ def parse_ai_response(answer_text: str) -> dict:
     }
 
 
+def _is_kazakh_text(text: str) -> bool:
+    """Определяет, написан ли текст на казахском языке по наличию специфических букв."""
+    kazakh_chars = set("әғқңөұүіһӘҒҚҢӨҰҮІҺ")
+    count = sum(1 for ch in text if ch in kazakh_chars)
+    return count >= 3
+
+
 class AIEngine:
     def __init__(
         self,
@@ -177,6 +184,40 @@ class AIEngine:
 
     def is_available(self) -> bool:
         return self._client is not None
+
+    async def translate(self, text: str, target_lang: str = "ru") -> str | None:
+        """Переводит текст с казахского на указанный язык через ChatGPT."""
+        if not self.is_available():
+            return None
+
+        lang_name = "русский" if target_lang == "ru" else target_lang
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    f"Ты — переводчик. Переведи текст с казахского на {lang_name}. "
+                    "Сохрани форматирование, эмодзи и HTML-теги. "
+                    "Верни ТОЛЬКО перевод, без пояснений."
+                ),
+            },
+            {"role": "user", "content": text},
+        ]
+
+        try:
+            async with self._semaphore:
+                response = await self._client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=0.1,
+                )
+            if response.choices and response.choices[0].message.content:
+                translated = response.choices[0].message.content.strip()
+                logger.info(f"Translated {len(text)} chars kk→{target_lang}")
+                return translated
+        except Exception as e:
+            logger.error(f"Translation error: {e}")
+
+        return None
 
     async def ask(
         self,
