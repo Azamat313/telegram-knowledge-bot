@@ -20,8 +20,9 @@ from core.search_engine import SearchEngine
 from core.ai_engine import AIEngine
 from core.knowledge_loader import load_all_knowledge
 from core.muftyat_api import MuftyatAPI
-from core.ramadan_calendar import is_ramadan, ensure_prayer_times, RAMADAN_START, RAMADAN_END
+from core.ramadan_calendar import is_ramadan, get_ramadan_day_number, ensure_prayer_times, RAMADAN_START, RAMADAN_END
 from core.messages import get_msg
+from core.daily_tips import DAILY_TIPS
 from bot.handlers import user, admin, subscription
 from bot.handlers import consultation, calendar, moderator_request
 from bot.handlers import onboarding, kaspi_payment
@@ -134,6 +135,38 @@ async def ramadan_reminder_task(bot: Bot, db: Database, muftyat_api: MuftyatAPI)
                                 sent_today.add(key)
                             except Exception as e:
                                 logger.debug(f"Iftar reminder failed for {tid}: {e}")
+
+            # ── Daily tip at 12:00 ──
+            if is_ramadan() and now.hour == 12 and now.minute < 1:
+                day_num = get_ramadan_day_number()
+                if day_num and 1 <= day_num <= len(DAILY_TIPS):
+                    tip = DAILY_TIPS[day_num - 1]
+                    all_users = []
+                    for group in groups:
+                        users = await db.get_users_by_coordinates(group["city_lat"], group["city_lng"])
+                        all_users.extend(users)
+                    # Deduplicate by telegram_id
+                    seen_tids: set[int] = set()
+                    unique_users = []
+                    for u in all_users:
+                        if u["telegram_id"] not in seen_tids:
+                            seen_tids.add(u["telegram_id"])
+                            unique_users.append(u)
+                    sent_count = 0
+                    for u in unique_users:
+                        tid = u["telegram_id"]
+                        key = f"{today_str}:{tid}:daily_tip"
+                        if key not in sent_today:
+                            try:
+                                await bot.send_message(tid, tip, parse_mode=ParseMode.HTML)
+                                sent_today.add(key)
+                                sent_count += 1
+                                if sent_count % 25 == 0:
+                                    await asyncio.sleep(1)
+                            except Exception as e:
+                                logger.debug(f"Daily tip failed for {tid}: {e}")
+                    if sent_count:
+                        logger.info(f"Daily tip #{day_num} sent to {sent_count} users")
 
         except asyncio.CancelledError:
             logger.info("Ramadan reminder task cancelled")
