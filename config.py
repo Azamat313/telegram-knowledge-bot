@@ -27,8 +27,8 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "paraphrase-multilingual-MiniLM-L
 SIMILARITY_THRESHOLD = CACHE_THRESHOLD
 
 # Subscription
-FREE_ANSWERS_LIMIT = int(os.getenv("FREE_ANSWERS_LIMIT", "5"))
-WARNING_AT = int(os.getenv("WARNING_AT", "3"))
+FREE_ANSWERS_LIMIT = int(os.getenv("FREE_ANSWERS_LIMIT", "15"))
+WARNING_AT = int(os.getenv("WARNING_AT", "12"))
 RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "5"))
 
 # Conversation History
