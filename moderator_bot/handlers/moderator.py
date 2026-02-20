@@ -114,6 +114,13 @@ async def on_answer_text(message: Message, db: Database, state: FSMContext, **kw
         await message.answer("Жауап мәтінін жазыңыз.")
         return
 
+    if len(answer_text) > 3500:
+        await message.answer(
+            f"Жауап тым ұзын ({len(answer_text)} символ). "
+            f"Максимум — 3500 символ. Қысқартып қайта жіберіңіз."
+        )
+        return
+
     data = await state.get_data()
     ticket_id = data.get("ticket_id")
 

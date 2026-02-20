@@ -188,7 +188,8 @@ async def _do_city_search(
     data = await state.get_data()
     lang = data.get("lang", "kk")
 
-    cities = await api.search_cities(query.strip())
+    query = query.strip()[:100]
+    cities = await api.search_cities(query)
     if not cities:
         await message.answer(get_msg("onboarding_search_no_results", lang))
         await state.set_state(OnboardingStates.searching_city)

@@ -10,6 +10,7 @@ import os
 import sys
 
 from aiohttp import web
+from loguru import logger
 
 from config import (
     WEB_ADMIN_USER,
@@ -270,8 +271,8 @@ async def handle_dashboard(request):
 
 async def handle_users_list(request):
     db: Database = request.app["db"]
-    page = int(request.query.get("page", 1))
-    search = request.query.get("search", "")
+    page = max(1, min(int(request.query.get("page", 1)), 10000))
+    search = request.query.get("search", "")[:200]
     filter_ = request.query.get("filter", "all")
     items, total = await sql_list_users(db, page, 25, search, filter_)
     return _json({"items": items, "total": total, "page": page, "per_page": 25})
@@ -307,7 +308,7 @@ async def handle_user_revoke(request):
 
 async def handle_consultations_list(request):
     db: Database = request.app["db"]
-    page = int(request.query.get("page", 1))
+    page = max(1, min(int(request.query.get("page", 1)), 10000))
     status = request.query.get("status", "all")
     items, total = await sql_list_consultations(db, page, 20, status)
     return _json({"items": items, "total": total, "page": page, "per_page": 20})
@@ -358,7 +359,7 @@ async def handle_ustaz_activate(request):
 
 async def handle_tickets_list(request):
     db: Database = request.app["db"]
-    page = int(request.query.get("page", 1))
+    page = max(1, min(int(request.query.get("page", 1)), 10000))
     status = request.query.get("status", "all")
     items, total = await sql_list_tickets(db, page, 20, status)
     return _json({"items": items, "total": total, "page": page, "per_page": 20})
@@ -388,7 +389,7 @@ async def handle_ticket_answer(request):
 
 async def handle_logs_list(request):
     db: Database = request.app["db"]
-    page = int(request.query.get("page", 1))
+    page = max(1, min(int(request.query.get("page", 1)), 10000))
     filter_ = request.query.get("filter", "all")
     items, total = await sql_list_logs(db, page, 50, filter_)
     return _json({"items": items, "total": total, "page": page, "per_page": 50})
@@ -1230,21 +1231,31 @@ async def handle_index(request):
 
 
 @web.middleware
+async def security_headers_middleware(request, handler):
+    """Add security headers to every response."""
+    response = await handler(request)
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    return response
+
+
+@web.middleware
 async def basic_auth_middleware(request, handler):
     """HTTP Basic Auth middleware."""
-    if not WEB_ADMIN_PASSWORD:
-        return await handler(request)
-
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Basic "):
         try:
             decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
             username, password = decoded.split(":", 1)
             if username == WEB_ADMIN_USER and password == WEB_ADMIN_PASSWORD:
+                logger.info(f"Auth OK: {request.remote} user={username}")
                 return await handler(request)
         except Exception:
             pass
 
+    logger.warning(f"Failed auth: {request.remote} path={request.path}")
     return web.Response(
         status=401,
         text="401 Unauthorized",
@@ -1253,7 +1264,11 @@ async def basic_auth_middleware(request, handler):
 
 
 async def init_app():
-    app = web.Application(middlewares=[basic_auth_middleware])
+    if not WEB_ADMIN_PASSWORD:
+        logger.error("WEB_ADMIN_PASSWORD is not set! Refusing to start without auth.")
+        sys.exit(1)
+
+    app = web.Application(middlewares=[security_headers_middleware, basic_auth_middleware])
 
     db = Database()
     await db.connect()

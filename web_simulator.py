@@ -903,6 +903,17 @@ async def handle_ustaz_cancel(request):
 # ──────────────────────────────────────────────────────────
 
 @web.middleware
+async def security_headers_middleware(request, handler):
+    """Add security headers to every response."""
+    response = await handler(request)
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    return response
+
+
+@web.middleware
 async def basic_auth_middleware(request, handler):
     """HTTP Basic Auth middleware для защиты веб-панели."""
     if not WEB_ADMIN_PASSWORD:
@@ -914,10 +925,12 @@ async def basic_auth_middleware(request, handler):
             decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
             username, password = decoded.split(":", 1)
             if username == WEB_ADMIN_USER and password == WEB_ADMIN_PASSWORD:
+                logger.info(f"Auth OK: {request.remote} user={username}")
                 return await handler(request)
         except Exception:
             pass
 
+    logger.warning(f"Failed auth: {request.remote} path={request.path}")
     return web.Response(
         status=401,
         text="401 Unauthorized",
@@ -926,7 +939,7 @@ async def basic_auth_middleware(request, handler):
 
 
 async def init_app():
-    app = web.Application(middlewares=[basic_auth_middleware])
+    app = web.Application(middlewares=[security_headers_middleware, basic_auth_middleware])
 
     # БД
     logger.info("Connecting to database...")
