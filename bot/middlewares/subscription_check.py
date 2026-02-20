@@ -1,6 +1,7 @@
 """
 Middleware для проверки подписки и лимитов бесплатных ответов.
 Пропускает пользователей в OnboardingStates.
+Подписка проверяется ТОЛЬКО для текстовых вопросов — кнопки работают всегда.
 """
 
 from typing import Any, Awaitable, Callable, Dict
@@ -15,6 +16,17 @@ from database.db import Database
 from bot.keyboards.inline import get_subscription_keyboard
 from bot.states.onboarding import OnboardingStates
 from bot.states.kaspi import KaspiPaymentStates
+
+# Тексты кнопок главной клавиатуры — пропускаются без проверки лимита
+_BUTTON_TEXTS = {
+    "📅 Күнтізбе", "📅 Календарь",
+    "🕌 Ұстазға сұрақ", "🕌 Вопрос устазу",
+    "📊 Статистика",
+    "📝 Әкімшілікке жазу", "📝 Написать администрации",
+    "❓ Анықтама", "❓ Справка",
+    "📜 Шарттар", "📜 Условия",
+    "🌐 KZ/RU",
+}
 
 
 class SubscriptionCheckMiddleware(BaseMiddleware):
@@ -38,15 +50,21 @@ class SubscriptionCheckMiddleware(BaseMiddleware):
         if event.text and event.text.startswith("/"):
             return await handler(event, data)
 
+        # Пропускаем кнопки главной клавиатуры — они работают без подписки
+        if event.text and event.text in _BUTTON_TEXTS:
+            return await handler(event, data)
+
         user_id = event.from_user.id
 
-        # Пропускаем пользователей в онбординге или Kaspi-оплате
+        # Пропускаем пользователей в активных FSM-состояниях (онбординг, Kaspi, консультация, тикеты)
         state: FSMContext = data.get("state")
         if state:
             current_state = await state.get_state()
             if current_state and (
                 current_state.startswith("OnboardingStates:")
                 or current_state.startswith("KaspiPaymentStates:")
+                or current_state.startswith("ConsultationStates:")
+                or current_state.startswith("ModeratorRequestStates:")
             ):
                 return await handler(event, data)
 

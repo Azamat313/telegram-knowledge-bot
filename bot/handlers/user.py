@@ -29,7 +29,6 @@ def get_main_keyboard(lang: str = "kk") -> ReplyKeyboardMarkup:
         keyboard=[
             [
                 KeyboardButton(text=get_msg("btn_calendar", lang)),
-                KeyboardButton(text=get_msg("btn_prayer_times", lang)),
             ],
             [
                 KeyboardButton(text=get_msg("btn_ask_ustaz", lang)),
