@@ -6,6 +6,7 @@ SPA с тёмной темой — управление пользователя
 
 import asyncio
 import base64
+import io
 import json
 import os
 import sys
@@ -417,6 +418,32 @@ async def handle_kaspi_reject(request):
     return _json({"success": True, "message": "Payment rejected, subscription revoked"})
 
 
+async def handle_kaspi_receipt(request):
+    """Download receipt image from Telegram and serve it."""
+    db: Database = request.app["db"]
+    bot: Bot = request.app["bot"]
+    pid = int(request.match_info["id"])
+
+    cursor = await db._conn.execute(
+        "SELECT receipt_file_id FROM kaspi_payments WHERE id = ?", (pid,)
+    )
+    row = await cursor.fetchone()
+    if not row or not row["receipt_file_id"]:
+        return _json({"error": "Receipt not found"}, 404)
+
+    file = await bot.get_file(row["receipt_file_id"])
+    buf = io.BytesIO()
+    await bot.download_file(file.file_path, buf)
+    buf.seek(0)
+    data = buf.read()
+
+    ext = (file.file_path or "").rsplit(".", 1)[-1].lower()
+    ct = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+          "webp": "image/webp"}.get(ext, "image/jpeg")
+
+    return web.Response(body=data, content_type=ct)
+
+
 # ─── Logs ───
 
 async def handle_logs_list(request):
@@ -642,6 +669,7 @@ textarea{resize:vertical;min-height:80px;width:100%;font-family:inherit}
 .modal-overlay.show{display:flex}
 .modal{background:#17212b;border:1px solid #1e2d3d;border-radius:12px;padding:24px;
   width:90%;max-width:480px;max-height:80vh;overflow-y:auto}
+.modal.modal-lg{max-width:720px}
 .modal h3{margin-bottom:16px;font-size:16px}
 .modal-actions{display:flex;gap:10px;margin-top:16px;justify-content:flex-end}
 
@@ -742,8 +770,10 @@ function toast(msg, type='info') {
 }
 
 // ─── Modal ───
-function openModal(html) {
-  document.getElementById('modal-content').innerHTML = html;
+function openModal(html, cls) {
+  const mc = document.getElementById('modal-content');
+  mc.innerHTML = html;
+  mc.className = 'modal' + (cls ? ' ' + cls : '');
   document.getElementById('modal-overlay').classList.add('show');
 }
 function closeModal() {
@@ -1287,12 +1317,15 @@ async function renderKaspi(page) {
           </select>
         </div>
         <table>
-          <tr><th>ID</th><th>User</th><th>Expected</th><th>Found</th><th>Receipt Date</th><th>Status</th><th>Created</th><th>Actions</th></tr>`;
+          <tr><th>ID</th><th>User</th><th>Expected</th><th>Found</th><th>Receipt Date</th><th>Status</th><th>Created</th><th>Receipt</th><th>Actions</th></tr>`;
     for (const k of d.items) {
       const actions = (k.status === 'auto_approved' || k.status === 'pending')
         ? `<button class="btn btn-success btn-sm" onclick="approveKaspi(${k.id})">Approve</button>
            <button class="btn btn-danger btn-sm" onclick="rejectKaspi(${k.id})">Reject</button>`
         : badgeFor(k.status);
+      const receiptBtn = k.receipt_file_id
+        ? `<button class="btn btn-primary btn-sm" onclick="showReceipt(${k.id}, ${k.amount_expected}, '${esc(k.status)}', '${esc(k.created_at||'')}')">📷</button>`
+        : '-';
       h += `<tr>
         <td>${k.id}</td>
         <td>${userName(k,'')}</td>
@@ -1301,6 +1334,7 @@ async function renderKaspi(page) {
         <td>${esc(k.comment_found||'-')}</td>
         <td>${badgeFor(k.status)}</td>
         <td>${fmtDate(k.created_at)}</td>
+        <td>${receiptBtn}</td>
         <td>${actions}</td>
       </tr>`;
     }
@@ -1325,6 +1359,32 @@ async function rejectKaspi(id) {
     toast('Payment rejected, subscription revoked','success');
     renderKaspi(1);
   } catch(e) { toast(e.message,'error'); }
+}
+
+function showReceipt(id, amount, status, createdAt) {
+  openModal(`
+    <h3>Receipt — Payment #${id}</h3>
+    <div style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap">
+      <div class="detail-row" style="flex:1;min-width:100px"><div class="detail-label">Amount</div><div class="detail-value">${amount} ₸</div></div>
+      <div class="detail-row" style="flex:1;min-width:100px"><div class="detail-label">Status</div><div class="detail-value">${badgeFor(status)}</div></div>
+      <div class="detail-row" style="flex:1;min-width:100px"><div class="detail-label">Created</div><div class="detail-value">${fmtDate(createdAt)}</div></div>
+    </div>
+    <div style="text-align:center;padding:20px;color:#8899a6">Loading image...</div>
+    <div class="modal-actions"><button class="btn btn-primary" onclick="closeModal()">Close</button></div>
+  `, 'modal-lg');
+  const img = new Image();
+  img.onload = function() {
+    const mc = document.getElementById('modal-content');
+    const loader = mc.querySelector('div[style*="Loading"]');
+    if (loader) loader.replaceWith(img);
+  };
+  img.onerror = function() {
+    const mc = document.getElementById('modal-content');
+    const loader = mc.querySelector('div[style*="Loading"]');
+    if (loader) loader.innerHTML = '<span style="color:#f87171">Failed to load receipt image</span>';
+  };
+  img.style.cssText = 'max-width:100%;border-radius:8px;border:1px solid #1e2d3d';
+  img.src = `/api/admin/kaspi/${id}/receipt`;
 }
 
 // ─── Broadcast ───
@@ -1525,6 +1585,7 @@ async def init_app():
 
     # Kaspi Payments
     app.router.add_get("/api/admin/kaspi/list", handle_kaspi_list)
+    app.router.add_get("/api/admin/kaspi/{id}/receipt", handle_kaspi_receipt)
     app.router.add_post("/api/admin/kaspi/{id}/approve", handle_kaspi_approve)
     app.router.add_post("/api/admin/kaspi/{id}/reject", handle_kaspi_reject)
 
