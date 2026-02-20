@@ -14,6 +14,7 @@ from core.messages import get_msg
 from database.db import Database
 from bot.keyboards.inline import get_subscription_keyboard
 from bot.states.onboarding import OnboardingStates
+from bot.states.kaspi import KaspiPaymentStates
 
 
 class SubscriptionCheckMiddleware(BaseMiddleware):
@@ -39,11 +40,14 @@ class SubscriptionCheckMiddleware(BaseMiddleware):
 
         user_id = event.from_user.id
 
-        # Пропускаем пользователей в онбординге
+        # Пропускаем пользователей в онбординге или Kaspi-оплате
         state: FSMContext = data.get("state")
         if state:
             current_state = await state.get_state()
-            if current_state and current_state.startswith("OnboardingStates:"):
+            if current_state and (
+                current_state.startswith("OnboardingStates:")
+                or current_state.startswith("KaspiPaymentStates:")
+            ):
                 return await handler(event, data)
 
         user = await self.db.get_or_create_user(
@@ -67,7 +71,7 @@ class SubscriptionCheckMiddleware(BaseMiddleware):
         if user["answers_count"] >= FREE_ANSWERS_LIMIT:
             await event.answer(
                 get_msg("limit_reached", user_lang, limit=FREE_ANSWERS_LIMIT),
-                reply_markup=get_subscription_keyboard(),
+                reply_markup=get_subscription_keyboard(lang=user_lang),
             )
             return None
 

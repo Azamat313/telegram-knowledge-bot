@@ -9,6 +9,8 @@
 """
 
 import asyncio
+import base64
+import json
 import re
 
 from openai import AsyncOpenAI
@@ -184,6 +186,72 @@ class AIEngine:
 
     def is_available(self) -> bool:
         return self._client is not None
+
+    async def analyze_receipt(self, image_bytes: bytes) -> dict | None:
+        """Анализирует фото чека Kaspi через GPT Vision. Возвращает {amount, date}."""
+        if not self.is_available():
+            return None
+
+        b64_image = base64.b64encode(image_bytes).decode("utf-8")
+        data_uri = f"data:image/jpeg;base64,{b64_image}"
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Ты анализируешь скриншоты чеков Kaspi-переводов/оплат. "
+                    "Извлеки сумму платежа и дату операции. "
+                    "Верни ТОЛЬКО JSON: {\"amount\": число, \"date\": \"ДД.ММ.ГГГГ\"}\n"
+                    "Дату верни в формате ДД.ММ.ГГГГ. Сумму верни как число без валюты.\n"
+                    "Если не можешь распознать, верни: {\"amount\": null, \"date\": null}"
+                ),
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Это скриншот чека Kaspi-оплаты. Извлеки:\n"
+                            "1. Сумму платежа (число, без валюты)\n"
+                            "2. Дату операции (в формате ДД.ММ.ГГГГ)\n"
+                            "Верни JSON: {\"amount\": число, \"date\": \"ДД.ММ.ГГГГ\"}"
+                        ),
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": data_uri},
+                    },
+                ],
+            },
+        ]
+
+        try:
+            async with self._semaphore:
+                response = await self._client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=messages,
+                    temperature=0.0,
+                    max_tokens=200,
+                )
+
+            content = response.choices[0].message.content.strip() if response.choices else ""
+            if not content:
+                return None
+
+            # Извлекаем JSON из ответа (может быть обёрнут в markdown)
+            json_match = re.search(r'\{[^}]+\}', content)
+            if not json_match:
+                logger.warning(f"Receipt analysis: no JSON found in response: {content}")
+                return None
+
+            result = json.loads(json_match.group())
+            logger.info(f"Receipt analysis: amount={result.get('amount')}, date={result.get('date')}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Receipt analysis error: {e}")
+            return None
 
     async def translate(self, text: str, target_lang: str = "ru") -> str | None:
         """Переводит текст с казахского на указанный язык через ChatGPT."""

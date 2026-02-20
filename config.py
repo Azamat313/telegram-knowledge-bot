@@ -44,6 +44,11 @@ WEB_ADMIN_PASSWORD = os.getenv("WEB_ADMIN_PASSWORD", "")
 # Domain
 DOMAIN = os.getenv("DOMAIN", "")
 
+# Kaspi Payment
+KASPI_PAY_LINK = os.getenv("KASPI_PAY_LINK", "")
+KASPI_PRICE_KZT = int(os.getenv("KASPI_PRICE_KZT", "990"))
+KASPI_PLAN_DAYS = int(os.getenv("KASPI_PLAN_DAYS", "30"))
+
 SUBSCRIPTION_PLANS = {
     "monthly": {"price": 50, "currency": "XTR", "days": 30, "label": "Айлық жазылым (30 күн)"},
     "yearly": {"price": 500, "currency": "XTR", "days": 365, "label": "Жылдық жазылым (365 күн)"},

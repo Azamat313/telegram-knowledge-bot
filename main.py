@@ -21,7 +21,7 @@ from core.knowledge_loader import load_all_knowledge
 from core.muftyat_api import MuftyatAPI
 from bot.handlers import user, admin, subscription
 from bot.handlers import consultation, calendar, moderator_request
-from bot.handlers import onboarding
+from bot.handlers import onboarding, kaspi_payment
 from bot.middlewares.rate_limit import RateLimitMiddleware
 from bot.middlewares.subscription_check import SubscriptionCheckMiddleware
 
@@ -111,6 +111,7 @@ async def main():
     dp.include_router(onboarding.router)    # Онбординг — ПЕРЕД user
     dp.include_router(admin.router)
     dp.include_router(subscription.router)
+    dp.include_router(kaspi_payment.router)
     dp.include_router(consultation.router)
     dp.include_router(calendar.router)
     dp.include_router(moderator_request.router)

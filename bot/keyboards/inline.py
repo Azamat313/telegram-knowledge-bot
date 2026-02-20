@@ -3,12 +3,12 @@ Inline-клавиатуры для бота.
 """
 
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from config import SUBSCRIPTION_PLANS
+from config import SUBSCRIPTION_PLANS, KASPI_PAY_LINK, KASPI_PRICE_KZT
 from core.messages import get_msg
 
 
-def get_subscription_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура с тарифами подписки (Telegram Stars)."""
+def get_subscription_keyboard(lang: str = "kk") -> InlineKeyboardMarkup:
+    """Клавиатура с тарифами подписки (Telegram Stars + Kaspi)."""
     buttons = []
     for plan_key, plan_info in SUBSCRIPTION_PLANS.items():
         price = plan_info["price"]
@@ -16,6 +16,12 @@ def get_subscription_keyboard() -> InlineKeyboardMarkup:
         buttons.append(
             [InlineKeyboardButton(text=f"⭐ {label} — {price} Stars", callback_data=f"subscribe:{plan_key}")]
         )
+    # Kaspi кнопка (если настроена ссылка)
+    if KASPI_PAY_LINK:
+        buttons.append([InlineKeyboardButton(
+            text=f"💳 Kaspi — {KASPI_PRICE_KZT} ₸",
+            callback_data="kaspi_pay",
+        )])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 

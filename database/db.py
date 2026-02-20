@@ -741,3 +741,127 @@ class Database:
         row = await cursor.fetchone()
         stats["total"] = row["cnt"]
         return stats
+
+    # ──────────────────────── Kaspi Payments ────────────────────────
+
+    async def create_kaspi_payment(
+        self,
+        user_telegram_id: int,
+        amount: float,
+        plan_days: int = 30,
+    ) -> int:
+        """Создать запись Kaspi-платежа. Возвращает ID."""
+        cursor = await self._conn.execute(
+            "INSERT INTO kaspi_payments "
+            "(user_telegram_id, amount_expected, plan_days) "
+            "VALUES (?, ?, ?)",
+            (user_telegram_id, amount, plan_days),
+        )
+        await self._conn.commit()
+        logger.info(f"Kaspi payment created: user={user_telegram_id}, id={cursor.lastrowid}")
+        return cursor.lastrowid
+
+    async def get_pending_kaspi_payment(self, user_telegram_id: int) -> Optional[dict]:
+        """Получить последний pending Kaspi-платёж пользователя."""
+        cursor = await self._conn.execute(
+            "SELECT * FROM kaspi_payments "
+            "WHERE user_telegram_id = ? AND status = 'pending' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (user_telegram_id,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def update_kaspi_payment(
+        self,
+        payment_id: int,
+        amount_found: float = None,
+        comment_found: str = None,
+        receipt_file_id: str = None,
+        status: str = None,
+    ):
+        """Обновить данные Kaspi-платежа."""
+        updates = []
+        params = []
+        if amount_found is not None:
+            updates.append("amount_found = ?")
+            params.append(amount_found)
+        if comment_found is not None:
+            updates.append("comment_found = ?")
+            params.append(comment_found)
+        if receipt_file_id is not None:
+            updates.append("receipt_file_id = ?")
+            params.append(receipt_file_id)
+        if status is not None:
+            updates.append("status = ?")
+            params.append(status)
+            if status in ("auto_approved", "approved", "rejected"):
+                updates.append("verified_at = CURRENT_TIMESTAMP")
+                if status == "auto_approved":
+                    updates.append("verified_by = 'auto'")
+
+        if not updates:
+            return
+
+        params.append(payment_id)
+        await self._conn.execute(
+            f"UPDATE kaspi_payments SET {', '.join(updates)} WHERE id = ?",
+            params,
+        )
+        await self._conn.commit()
+
+    async def get_kaspi_payments_for_review(
+        self, page: int = 1, per_page: int = 20, status: str = "all"
+    ) -> tuple[list[dict], int]:
+        """Список Kaspi-платежей для админки."""
+        offset = (page - 1) * per_page
+        where = []
+        params = []
+
+        if status != "all":
+            where.append("k.status = ?")
+            params.append(status)
+
+        where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+        count_sql = f"SELECT COUNT(*) as cnt FROM kaspi_payments k {where_sql}"
+        cursor = await self._conn.execute(count_sql, params)
+        total = (await cursor.fetchone())["cnt"]
+
+        data_sql = (
+            f"SELECT k.*, u.username, u.first_name "
+            f"FROM kaspi_payments k "
+            f"LEFT JOIN users u ON k.user_telegram_id = u.telegram_id "
+            f"{where_sql} ORDER BY k.created_at DESC LIMIT ? OFFSET ?"
+        )
+        cursor = await self._conn.execute(data_sql, params + [per_page, offset])
+        items = [dict(row) for row in await cursor.fetchall()]
+        return items, total
+
+    async def approve_kaspi_payment(self, payment_id: int, admin_username: str):
+        """Подтвердить Kaspi-платёж (админом)."""
+        await self._conn.execute(
+            "UPDATE kaspi_payments SET status = 'approved', verified_by = ?, "
+            "verified_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (admin_username, payment_id),
+        )
+        await self._conn.commit()
+        logger.info(f"Kaspi payment #{payment_id} approved by {admin_username}")
+
+    async def reject_kaspi_payment(self, payment_id: int, admin_username: str):
+        """Отклонить Kaspi-платёж и отозвать подписку."""
+        cursor = await self._conn.execute(
+            "SELECT user_telegram_id FROM kaspi_payments WHERE id = ?",
+            (payment_id,),
+        )
+        row = await cursor.fetchone()
+        if row:
+            await self.revoke_subscription(row["user_telegram_id"])
+
+        await self._conn.execute(
+            "UPDATE kaspi_payments SET status = 'rejected', verified_by = ?, "
+            "verified_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (admin_username, payment_id),
+        )
+        await self._conn.commit()
+        logger.info(f"Kaspi payment #{payment_id} rejected by {admin_username}")

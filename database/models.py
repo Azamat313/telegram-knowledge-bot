@@ -145,4 +145,21 @@ CREATE INDEX IF NOT EXISTS idx_ramadan_schedule_city ON ramadan_schedule(city);
 CREATE INDEX IF NOT EXISTS idx_moderator_tickets_status ON moderator_tickets(status);
 CREATE INDEX IF NOT EXISTS idx_moderator_tickets_user ON moderator_tickets(user_telegram_id);
 CREATE INDEX IF NOT EXISTS idx_prayer_cache_coords_date ON prayer_times_cache(lat, lng, date);
+
+CREATE TABLE IF NOT EXISTS kaspi_payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_telegram_id BIGINT NOT NULL,
+    payment_code TEXT,
+    amount_expected REAL NOT NULL,
+    amount_found REAL,
+    comment_found TEXT,
+    receipt_file_id TEXT,
+    status TEXT DEFAULT 'pending',
+    plan_days INTEGER DEFAULT 30,
+    verified_by TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    verified_at DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_kaspi_payments_user ON kaspi_payments(user_telegram_id);
+CREATE INDEX IF NOT EXISTS idx_kaspi_payments_status ON kaspi_payments(status);
 """

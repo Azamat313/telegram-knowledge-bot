@@ -25,6 +25,9 @@ from config import (
     CACHE_THRESHOLD,
     SUBSCRIPTION_PLANS,
     DOMAIN,
+    KASPI_PAY_LINK,
+    KASPI_PRICE_KZT,
+    KASPI_PLAN_DAYS,
 )
 from database.db import Database
 
@@ -385,6 +388,30 @@ async def handle_ticket_answer(request):
     return _json({"success": True, "ticket": ticket})
 
 
+# ─── Kaspi Payments ───
+
+async def handle_kaspi_list(request):
+    db: Database = request.app["db"]
+    page = max(1, min(int(request.query.get("page", 1)), 10000))
+    status = request.query.get("status", "all")
+    items, total = await db.get_kaspi_payments_for_review(page, 20, status)
+    return _json({"items": items, "total": total, "page": page, "per_page": 20})
+
+
+async def handle_kaspi_approve(request):
+    db: Database = request.app["db"]
+    pid = int(request.match_info["id"])
+    await db.approve_kaspi_payment(pid, WEB_ADMIN_USER)
+    return _json({"success": True, "message": "Payment approved"})
+
+
+async def handle_kaspi_reject(request):
+    db: Database = request.app["db"]
+    pid = int(request.match_info["id"])
+    await db.reject_kaspi_payment(pid, WEB_ADMIN_USER)
+    return _json({"success": True, "message": "Payment rejected, subscription revoked"})
+
+
 # ─── Logs ───
 
 async def handle_logs_list(request):
@@ -421,6 +448,9 @@ async def handle_settings(request):
         "CACHE_THRESHOLD": CACHE_THRESHOLD,
         "SUBSCRIPTION_PLANS": SUBSCRIPTION_PLANS,
         "DOMAIN": DOMAIN,
+        "KASPI_PAY_LINK": KASPI_PAY_LINK or "-",
+        "KASPI_PRICE_KZT": KASPI_PRICE_KZT,
+        "KASPI_PLAN_DAYS": KASPI_PLAN_DAYS,
     })
 
 
@@ -492,6 +522,9 @@ tr:hover td{background:#1a2332}
 .badge-free{background:#8899a633;color:#8899a6}
 .badge-yes{background:#52b78833;color:#52b788}
 .badge-no{background:#f8717133;color:#f87171}
+.badge-auto_approved{background:#a78bfa33;color:#a78bfa}
+.badge-approved{background:#52b78833;color:#52b788}
+.badge-rejected{background:#f8717133;color:#f87171}
 
 /* Buttons */
 .btn{display:inline-flex;align-items:center;padding:6px 14px;border-radius:8px;
@@ -613,6 +646,10 @@ textarea{resize:vertical;min-height:80px;width:100%;font-family:inherit}
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V7.5L14.5 2z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
       <span>Tickets</span>
     </div>
+    <div class="nav-item" onclick="navigate('kaspi')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+      <span>Kaspi</span>
+    </div>
     <div class="nav-item" onclick="navigate('logs')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22,12 18,12 15,21 9,3 6,12 2,12"/></svg>
       <span>Logs</span>
@@ -689,7 +726,7 @@ function paginationHTML(total, page, perPage, onClickFn) {
 function navigate(page) {
   currentPage = page;
   document.querySelectorAll('.nav-item').forEach((el, i) => {
-    const pages = ['dashboard','users','consultations','ustazs','tickets','logs','settings'];
+    const pages = ['dashboard','users','consultations','ustazs','tickets','kaspi','logs','settings'];
     el.classList.toggle('active', pages[i] === page);
   });
   renderPage();
@@ -704,6 +741,7 @@ function renderPage() {
     case 'consultations': renderConsultations(1); break;
     case 'ustazs': renderUstazs(); break;
     case 'tickets': renderTickets(1); break;
+    case 'kaspi': renderKaspi(1); break;
     case 'logs': renderLogs(1); break;
     case 'settings': renderSettings(); break;
   }
@@ -1185,6 +1223,65 @@ async function renderLogsPopular() {
   } catch(e) { toast(e.message,'error'); }
 }
 
+// ─── Kaspi Payments ───
+let kaspiFilter = 'all';
+
+async function renderKaspi(page) {
+  try {
+    const d = await apiGet(`/api/admin/kaspi/list?page=${page}&status=${kaspiFilter}`);
+    let h = `
+      <div class="section">
+        <h2>Kaspi Payments</h2>
+        <div class="toolbar">
+          <select onchange="kaspiFilter=this.value;renderKaspi(1)">
+            <option value="all"${kaspiFilter==='all'?' selected':''}>All</option>
+            <option value="pending"${kaspiFilter==='pending'?' selected':''}>Pending</option>
+            <option value="auto_approved"${kaspiFilter==='auto_approved'?' selected':''}>Auto Approved</option>
+            <option value="approved"${kaspiFilter==='approved'?' selected':''}>Approved</option>
+            <option value="rejected"${kaspiFilter==='rejected'?' selected':''}>Rejected</option>
+          </select>
+        </div>
+        <table>
+          <tr><th>ID</th><th>User</th><th>Expected</th><th>Found</th><th>Receipt Date</th><th>Status</th><th>Created</th><th>Actions</th></tr>`;
+    for (const k of d.items) {
+      const actions = (k.status === 'auto_approved' || k.status === 'pending')
+        ? `<button class="btn btn-success btn-sm" onclick="approveKaspi(${k.id})">Approve</button>
+           <button class="btn btn-danger btn-sm" onclick="rejectKaspi(${k.id})">Reject</button>`
+        : badgeFor(k.status);
+      h += `<tr>
+        <td>${k.id}</td>
+        <td>${userName(k,'')}</td>
+        <td>${k.amount_expected} ₸</td>
+        <td>${k.amount_found != null ? k.amount_found + ' ₸' : '-'}</td>
+        <td>${esc(k.comment_found||'-')}</td>
+        <td>${badgeFor(k.status)}</td>
+        <td>${fmtDate(k.created_at)}</td>
+        <td>${actions}</td>
+      </tr>`;
+    }
+    h += `</table>${paginationHTML(d.total, d.page, d.per_page, 'renderKaspi')}</div>`;
+    document.getElementById('main').innerHTML = h;
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function approveKaspi(id) {
+  if (!confirm('Approve Kaspi payment #' + id + '?')) return;
+  try {
+    await apiPost(`/api/admin/kaspi/${id}/approve`, {});
+    toast('Payment approved!','success');
+    renderKaspi(1);
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function rejectKaspi(id) {
+  if (!confirm('Reject Kaspi payment #' + id + '? Subscription will be revoked.')) return;
+  try {
+    await apiPost(`/api/admin/kaspi/${id}/reject`, {});
+    toast('Payment rejected, subscription revoked','success');
+    renderKaspi(1);
+  } catch(e) { toast(e.message,'error'); }
+}
+
 // ─── Settings ───
 async function renderSettings() {
   try {
@@ -1200,6 +1297,9 @@ async function renderSettings() {
       ['USTAZ_MONTHLY_LIMIT', s.USTAZ_MONTHLY_LIMIT],
       ['CONVERSATION_HISTORY_LIMIT', s.CONVERSATION_HISTORY_LIMIT],
       ['CACHE_THRESHOLD', s.CACHE_THRESHOLD],
+      ['KASPI_PAY_LINK', s.KASPI_PAY_LINK || '-'],
+      ['KASPI_PRICE_KZT', s.KASPI_PRICE_KZT],
+      ['KASPI_PLAN_DAYS', s.KASPI_PLAN_DAYS],
     ];
     for (const [k, v] of display) {
       h += `<li><span class="s-key">${esc(k)}</span><span class="s-val">${esc(String(v))}</span></li>`;
@@ -1300,6 +1400,11 @@ async def init_app():
     app.router.add_get("/api/admin/tickets", handle_tickets_list)
     app.router.add_get("/api/admin/tickets/{id}", handle_ticket_detail)
     app.router.add_post("/api/admin/tickets/{id}/answer", handle_ticket_answer)
+
+    # Kaspi Payments
+    app.router.add_get("/api/admin/kaspi/list", handle_kaspi_list)
+    app.router.add_post("/api/admin/kaspi/{id}/approve", handle_kaspi_approve)
+    app.router.add_post("/api/admin/kaspi/{id}/reject", handle_kaspi_reject)
 
     # Logs
     app.router.add_get("/api/admin/logs", handle_logs_list)
